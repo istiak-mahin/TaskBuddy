@@ -1,0 +1,96 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "User account information and role.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "username": { "type": "string", "description": "Unique handle starting with @" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["student", "admin"] },
+        "createdAt": { "type": "string" },
+        "photoURL": { "type": "string" }
+      },
+      "required": ["uid", "name", "email", "role"]
+    },
+    "Assignment": {
+      "title": "Assignment",
+      "description": "An assignment assigned to a specific user.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "course": { "type": "string" },
+        "deadline": { "type": "string" },
+        "total_hours": { "type": "number" },
+        "completed_hours": { "type": "number" },
+        "urgency": { "type": "string", "enum": ["low", "medium", "urgent", "overdue", "done"] },
+        "createdAt": { "type": "string" },
+        "type": { "type": "string", "enum": ["Quiz", "Assignment", "Presentation"] },
+        "userId": { "type": "string", "description": "UID of the student assigned to this task" }
+      },
+      "required": ["title", "course", "deadline", "type", "userId"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "A global announcement posted by admin.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "priority": { "type": "string", "enum": ["normal", "important"] },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["title", "content", "priority", "createdAt", "createdBy"]
+    },
+    "Course": {
+      "title": "Course",
+      "description": "A course created by admin.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["name", "createdBy"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "A notification for a specific user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["reminder", "announcement", "system"] },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "assignmentId": { "type": "string", "description": "Optional reference to an assignment" }
+      },
+      "required": ["userId", "title", "message", "type", "read", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "UserProfile",
+      "description": "Individual user profiles."
+    },
+    "/assignments/{assignmentId}": {
+      "schema": "Assignment",
+      "description": "Assignments assigned to students."
+    },
+    "/announcements/{announcementId}": {
+      "schema": "Announcement",
+      "description": "Global announcements."
+    },
+    "/courses/{courseId}": {
+      "schema": "Course",
+      "description": "Global courses."
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User-specific notifications."
+    }
+  }
+}

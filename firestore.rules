@@ -1,0 +1,196 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {uid}
+    // Fields:
+    //   - uid: string (required)
+    //   - name: string (required)
+    //   - username: string (optional, starts with @)
+    //   - email: string (required)
+    //   - role: string (required, ['student', 'admin'])
+    //   - createdAt: timestamp (optional)
+    //   - photoURL: string (optional)
+    //
+    // Collection: assignments
+    // Document ID: {assignmentId}
+    // Fields:
+    //   - title: string (required)
+    //   - course: string (required)
+    //   - deadline: string (required, ISO 8601)
+    //   - userId: string (required, student UID)
+    //   - type: string (required, ['Quiz', 'Assignment', 'Presentation'])
+    //   - completed_hours: number (required)
+    //   - total_hours: number (required)
+    //   - urgency: string (required)
+    //
+    // Collection: announcements
+    // Document ID: {announcementId}
+    // Fields:
+    //   - title: string (required)
+    //   - content: string (required)
+    //   - priority: string (required, ['normal', 'important'])
+    //   - createdAt: string (required)
+    //   - createdBy: string (required)
+    //
+    // Collection: courses
+    // Document ID: {courseId}
+    // Fields:
+    //   - name: string (required)
+    //   - createdBy: string (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        request.auth.token.email == "carlesirodriguez7@gmail.com"
+      );
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string &&
+             dateStr.size() >= 10;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUsername(username) {
+      return username is string && username.matches("^@.*") && username.size() >= 4 && username.size() <= 30;
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'name', 'email', 'role']) &&
+             data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.role in ['student', 'admin'] &&
+             (!('username' in data) || isValidUsername(data.username)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 1000)) &&
+             (!('disabled' in data) || data.disabled is bool);
+    }
+
+    function isValidAssignment(data) {
+      return hasRequiredFields(['title', 'course', 'deadline', 'userId', 'type']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.course is string && data.course.size() > 0 && data.course.size() < 100 &&
+             isValidDateString(data.deadline) &&
+             data.userId is string && data.userId.size() > 0 &&
+             data.type in ['Quiz', 'Assignment', 'Presentation'] &&
+             (!('completed_hours' in data) || data.completed_hours is number) &&
+             (!('total_hours' in data) || data.total_hours is number) &&
+             (!('urgency' in data) || data.urgency is string) &&
+             (!('createdBy' in data) || data.createdBy is string) &&
+             (!('createdAt' in data) || data.createdAt is timestamp || data.createdAt is string);
+    }
+
+    function isValidAnnouncement(data) {
+      return hasRequiredFields(['title', 'content', 'priority', 'createdAt', 'createdBy']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.content is string && data.content.size() > 0 && data.content.size() < 5000 &&
+             data.priority in ['normal', 'important'] &&
+             (isValidDateString(data.createdAt) || data.createdAt is timestamp) &&
+             data.createdBy is string;
+    }
+
+    function isValidCourse(data) {
+      return hasRequiredFields(['name', 'createdBy']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.createdBy is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      // Allow get if owner or admin
+      allow get: if isOwner(userId) || isAdmin();
+      
+      // Allow list for admins only to prevent PII leaks
+      allow list: if isAdmin();
+      
+      // Create: Admin can create anyone. Users can create themselves as students during signup.
+      allow create: if (isAdmin() && isValidUser(request.resource.data)) || 
+                      (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'student');
+      
+      // Update: Admin can update anyone. Owner can update their own profile but NOT their role or email.
+      allow update: if (isAdmin() && isValidUser(request.resource.data)) ||
+                      (isOwner(userId) && isValidUser(request.resource.data) && 
+                       request.resource.data.role == resource.data.role &&
+                       request.resource.data.email == resource.data.email);
+    }
+
+    match /assignments/{assignmentId} {
+      // All authenticated users can read assignments (as requested: "all user can only see that")
+      allow read: if isAuthenticated();
+      
+      // Only admins can create assignments
+      allow create: if isAdmin() && isValidAssignment(request.resource.data);
+      
+      // Only admins can update assignments (as requested: "all user can only see that")
+      allow update: if isAdmin() && isValidAssignment(request.resource.data);
+      
+      // Only admins can delete assignments
+      allow delete: if isAdmin();
+    }
+
+    match /announcements/{announcementId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidAnnouncement(request.resource.data);
+      allow update: if isAdmin() && isValidAnnouncement(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /courses/{courseId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidCourse(request.resource.data);
+      allow update: if isAdmin() && isValidCourse(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAdmin();
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && 
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
