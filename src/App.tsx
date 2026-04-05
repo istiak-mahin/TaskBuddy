@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { auth, db } from './firebase';
 import {
   onAuthStateChanged,
-  signInWithRedirect,
-  getRedirectResult,
+  signInWithPopup,
   GoogleAuthProvider,
   signOut,
   User,
@@ -141,30 +140,6 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
-    const checkRedirect = async () => {
-      try {
-        setIsProcessing(true);
-        setError(null);
-
-        const result = await getRedirectResult(auth);
-
-        if (result?.user) {
-          console.log('Redirect sign-in successful:', result.user.email);
-        }
-      } catch (error: any) {
-        console.error('Redirect sign-in error:', error);
-        if (isMounted) {
-          setError(error.message || 'Failed to sign in with Google.');
-        }
-      } finally {
-        if (isMounted) {
-          setIsProcessing(false);
-        }
-      }
-    };
-
-    checkRedirect();
-
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!isMounted) return;
 
@@ -247,10 +222,11 @@ export default function App() {
     setError(null);
 
     try {
-      await signInWithRedirect(auth, provider);
+      await signInWithPopup(auth, provider);
     } catch (error: any) {
       console.error('Login failed:', error);
       setError(error.message || 'Failed to sign in with Google.');
+    } finally {
       setIsProcessing(false);
     }
   };
