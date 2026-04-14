@@ -25,7 +25,7 @@ This repository is configured to deploy automatically to GitHub Pages using GitH
 
 ### What is configured
 
-- Workflow file: `/home/runner/work/Study-Tracker/Study-Tracker/.github/workflows/static.yml`
+- Workflow file: `.github/workflows/static.yml`
 - Trigger: push to `main` (and manual `workflow_dispatch`)
 - Build: `npm ci` then `npm run build` with `VITE_BASE_PATH=/<repository-name>/`
 - Deploy: uploads `dist` and deploys via `actions/deploy-pages`
