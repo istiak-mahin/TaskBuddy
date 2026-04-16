@@ -60,14 +60,15 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && (
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-        request.auth.token.email == "carlesirodriguez7@gmail.com"
+        request.auth.token.email == "carlesirodriguez7@gmail.com" ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'student') == 'admin')
       );
     }
 
     function isValidDateString(dateStr) {
       return dateStr is string &&
-             dateStr.size() >= 10;
+             dateStr.matches("^\\d{4}-\\d{2}-\\d{2}.*");
     }
 
     function hasRequiredFields(fields) {
@@ -79,7 +80,7 @@ service cloud.firestore {
     }
 
     function isValidEmail(email) {
-      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+      return email is string && email.matches("(?i)^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$") && email.size() < 256;
     }
 
     function isValidUsername(username) {
@@ -91,14 +92,22 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidUser(data) {
-      return hasRequiredFields(['uid', 'name', 'email', 'role']) &&
-             data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
-             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             isValidEmail(data.email) &&
-             data.role in ['student', 'admin'] &&
-             (!('username' in data) || isValidUsername(data.username)) &&
-             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 1000)) &&
-             (!('disabled' in data) || data.disabled is bool);
+      let uid = data.get('uid', '');
+      let name = data.get('name', '');
+      let email = data.get('email', '');
+      let role = data.get('role', 'student');
+      let username = data.get('username', '');
+      let photoURL = data.get('photoURL', '');
+      let disabled = data.get('disabled', false);
+
+      return uid is string && uid.size() > 0 && uid.size() < 128 &&
+             name is string && name.size() > 0 && name.size() < 128 &&
+             (email == '' || isValidEmail(email)) &&
+             role in ['student', 'admin'] &&
+             (username == '' || isValidUsername(username)) &&
+             (photoURL == '' || (photoURL is string && photoURL.size() < 1000000)) &&
+             disabled is bool &&
+             (!('createdAt' in data) || data.createdAt is timestamp || isValidDateString(data.createdAt));
     }
 
     function isValidAssignment(data) {
@@ -112,7 +121,7 @@ service cloud.firestore {
              (!('total_hours' in data) || data.total_hours is number) &&
              (!('urgency' in data) || data.urgency is string) &&
              (!('createdBy' in data) || data.createdBy is string) &&
-             (!('createdAt' in data) || data.createdAt is timestamp || data.createdAt is string);
+             (!('createdAt' in data) || data.createdAt is timestamp || isValidDateString(data.createdAt));
     }
 
     function isValidAnnouncement(data) {
@@ -135,21 +144,40 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      // Allow get if owner or admin
       allow get: if isOwner(userId) || isAdmin();
-      
-      // Allow list for admins only to prevent PII leaks
       allow list: if isAdmin();
       
-      // Create: Admin can create anyone. Users can create themselves as students during signup.
-      allow create: if (isAdmin() && isValidUser(request.resource.data)) || 
-                      (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'student');
+      allow create: if isAuthenticated() && 
+                      isValidUser(request.resource.data) && 
+                      (isAdmin() || (isOwner(userId) && request.resource.data.get('role', 'student') == 'student'));
       
-      // Update: Admin can update anyone. Owner can update their own profile but NOT their role or email.
-      allow update: if (isAdmin() && isValidUser(request.resource.data)) ||
-                      (isOwner(userId) && isValidUser(request.resource.data) && 
-                       request.resource.data.role == resource.data.role &&
-                       request.resource.data.email == resource.data.email);
+      allow update: if isAuthenticated() && (
+                      isAdmin() || (
+                        isOwner(userId) && 
+                        // Lock sensitive fields for non-admins
+                        !request.resource.data.diff(resource.data).affectedKeys()
+                          .hasAny(['uid', 'email', 'disabled']) &&
+                        // Ensure role hasn't changed
+                        request.resource.data.get('role', 'student') == resource.data.get('role', 'student') &&
+                        isValidUser(request.resource.data)
+                      )
+                    );
+    }
+
+    match /usernames/{username} {
+      // Allow anyone to check if a username exists
+      allow get: if isAuthenticated();
+      
+      // Create: If the username doesn't exist AND the user is mapping it to their own UID
+      allow create: if isAuthenticated() && 
+                      request.resource.data.uid == request.auth.uid &&
+                      username.matches("^@.*") && username.size() >= 4;
+      
+      // Update: Not allowed (should delete and recreate)
+      allow update: if false;
+      
+      // Delete: Only owner can delete their username mapping
+      allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
     }
 
     match /assignments/{assignmentId} {

@@ -1,0 +1,15 @@
+node_modules/@google-cloud/storage/node_modules/gaxios/build/src/gaxios.js:const fetch = hasFetch() ? window.fetch : node_fetch_1.default;
+node_modules/@protobufjs/fetch/tests/index.js:var fetch = require("..");
+node_modules/google-gax/node_modules/gaxios/build/src/gaxios.js:const fetch = hasFetch() ? window.fetch : node_fetch_1.default;
+node_modules/google-gax/build/src/fallbackServiceStub.js:    const fetch = (0, featureDetection_1.hasWindowFetch)()
+node_modules/gtoken/node_modules/gaxios/build/src/gaxios.js:const fetch = hasFetch() ? window.fetch : node_fetch_1.default;
+node_modules/formdata-polyfill/FormData.js:  const _fetch = global.Request && global.fetch
+node_modules/formdata-polyfill/FormData.js:    global.fetch = function (input, init) {
+node_modules/gaxios/build/cjs/src/gaxios.js:     * const myFetch: typeof fetch = (...args) => gaxios.fetch(...args);
+node_modules/gaxios/build/esm/src/gaxios.js:     * const myFetch: typeof fetch = (...args) => gaxios.fetch(...args);
+node_modules/google-auth-library/build/src/auth/authclient.js:     * const fetchWithAuthClient: typeof fetch = (...args) => authClient.fetch(...args);
+node_modules/google-auth-library/build/src/auth/googleauth.js:     * const fetchWithAuth: typeof fetch = (...args) => auth.fetch(...args);
+node_modules/protobufjs/src/root.js:Root.prototype.fetch = util.fetch;
+node_modules/protobufjs/dist/light/protobuf.js:Root.prototype.fetch = util.fetch;
+node_modules/protobufjs/dist/protobuf.js:Root.prototype.fetch = util.fetch;
+node_modules/gh-pages/lib/git.js:Git.prototype.fetch = function (remote) {

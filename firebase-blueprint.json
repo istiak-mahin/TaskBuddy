@@ -91,6 +91,16 @@
     "/notifications/{notificationId}": {
       "schema": "Notification",
       "description": "User-specific notifications."
+    },
+    "/usernames/{username}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "uid": { "type": "string" }
+        },
+        "required": ["uid"]
+      },
+      "description": "Mapping from username handles to user UIDs for uniqueness checks."
     }
   }
 }

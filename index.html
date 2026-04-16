@@ -4,6 +4,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Google AI Studio App</title>
+    <script>
+      // Fix for environment where window.fetch is a getter and can't be reassigned by polyfills
+      (function() {
+        try {
+          const g = typeof globalThis !== 'undefined' ? globalThis : window;
+          const desc = Object.getOwnPropertyDescriptor(g, 'fetch');
+          if (desc && (!desc.writable || !desc.set) && desc.configurable) {
+            const originalFetch = g.fetch;
+            let currentFetch = originalFetch;
+            Object.defineProperty(g, 'fetch', {
+              get: () => currentFetch,
+              set: (v) => { currentFetch = v; },
+              configurable: true,
+              enumerable: true
+            });
+          }
+        } catch (e) {
+          // Ignore error if we can't patch it
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

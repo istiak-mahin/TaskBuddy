@@ -62,10 +62,11 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
-function CountdownTimer({ deadline }: { deadline: string }) {
+function CountdownTimer({ deadline, isDone }: { deadline: string, isDone?: boolean }) {
   const [timeLeft, setTimeLeft] = useState('');
 
   useEffect(() => {
+    if (isDone) return;
     const updateTimer = () => {
       const now = new Date().getTime();
       const target = new Date(deadline).getTime();
@@ -76,24 +77,41 @@ function CountdownTimer({ deadline }: { deadline: string }) {
         return;
       }
 
-      const hours = Math.floor(diff / (1000 * 60 * 60));
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
-      setTimeLeft(`${hours}h ${minutes}m ${seconds}s`);
+      if (diff > 24 * 60 * 60 * 1000) {
+        const d = Math.floor(diff / (1000 * 60 * 60 * 24));
+        const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        setTimeLeft(`${d}d ${h}h ${m}m`);
+      } else {
+        const h = Math.floor(diff / (1000 * 60 * 60));
+        const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const s = Math.floor((diff % (1000 * 60)) / 1000);
+        setTimeLeft(`${h}h ${m}m ${s}s`);
+      }
     };
 
     updateTimer();
     const interval = setInterval(updateTimer, 1000);
     return () => clearInterval(interval);
-  }, [deadline]);
+  }, [deadline, isDone]);
+
+  if (isDone) {
+    return (
+      <div className="text-right">
+        <p className="text-xs font-semibold tracking-tight text-emerald-500">
+          Completed
+        </p>
+        <p className="text-[10px] text-neutral-400 dark:text-neutral-500 font-medium uppercase tracking-wider">Status</p>
+      </div>
+    );
+  }
 
   return (
     <div className="text-right">
-      <p className={`text-xs font-semibold tracking-tight ${timeLeft === 'Overdue' ? 'text-red-500' : 'text-neutral-900'}`}>
+      <p className={`text-xs font-semibold tracking-tight ${timeLeft === 'Overdue' ? 'text-red-500' : 'text-neutral-900 dark:text-neutral-100'}`}>
         {timeLeft}
       </p>
-      <p className="text-[10px] text-neutral-400 font-medium uppercase tracking-wider">Remaining</p>
+      <p className="text-[10px] text-neutral-400 dark:text-neutral-500 font-medium uppercase tracking-wider">Remaining</p>
     </div>
   );
 }
@@ -106,7 +124,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCourse, setFilterCourse] = useState('all');
-  const [filterDeadline, setFilterDeadline] = useState<'all' | 'upcoming' | 'overdue' | 'completed'>('upcoming');
+  const [filterDeadline, setFilterDeadline] = useState<'all' | 'active' | 'completed'>('active');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
   const [newAssignment, setNewAssignment] = useState({
@@ -128,6 +146,15 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [docToDelete, setDocToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
@@ -182,10 +209,43 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
     };
   }, [profile.uid, isAdmin, studentId]);
 
+  const calculateTimeProgress = (assignment: Assignment) => {
+    if (isTaskDone(assignment)) return 100;
+    
+    try {
+      const now = new Date().getTime();
+      const deadline = new Date(assignment.deadline).getTime();
+      
+      // Handle Firestore Timestamp vs ISO string
+      let start: number;
+      if (assignment.createdAt?.seconds) {
+        start = assignment.createdAt.seconds * 1000;
+      } else if (assignment.createdAt) {
+        start = new Date(assignment.createdAt).getTime();
+      } else {
+        // Fallback: If no createdAt, assume it was created 7 days before deadline 
+        // or 24 hours ago if deadline is passed
+        start = deadline - (7 * 24 * 60 * 60 * 1000);
+      }
+
+      if (isNaN(start) || isNaN(deadline)) return 0;
+      
+      const total = deadline - start;
+      const elapsed = now - start;
+      
+      if (total <= 0) return 100;
+      
+      const progress = (elapsed / total) * 100;
+      return Math.min(Math.max(Math.round(progress), 0), 100);
+    } catch (e) {
+      return 0;
+    }
+  };
+
   const isTaskDone = (assignment: Assignment) => {
     if (assignment.urgency === 'done') return true;
     const deadline = new Date(assignment.deadline).getTime();
-    return deadline <= new Date().getTime();
+    return deadline <= currentTime.getTime();
   };
 
   const handleAddAssignment = async (e: React.FormEvent) => {
@@ -256,18 +316,21 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
         assignmentId: assignment.id
       });
 
-      // 2. Send Email Reminder via Server
-      try {
-        await fetch('/api/reminders/email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: studentId, title, message })
-        });
-      } catch (e) {
-        console.error('Failed to trigger email reminder:', e);
+      // 2. Send Email Reminder via Server (not available on GitHub Pages static hosting)
+      if (import.meta.env.VITE_GITHUB_PAGES !== 'true') {
+        try {
+          await fetch('/api/reminders/email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: studentId, title, message })
+          });
+        } catch (e) {
+          console.error('Failed to trigger email reminder:', e);
+        }
       }
 
-      alert('Reminder sent to student (In-app and Email)!');
+      const emailNote = import.meta.env.VITE_GITHUB_PAGES === 'true' ? ' (email delivery unavailable on this deployment)' : ' and Email';
+      alert(`Reminder sent to student (In-app${emailNote}!`);
     } catch (error) {
       console.error('Error sending reminder:', error);
     }
@@ -317,8 +380,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
     const isOverdue = !isDone && deadline <= now;
 
     let matchesDeadline = true;
-    if (filterDeadline === 'upcoming') matchesDeadline = !isDone && !isOverdue;
-    else if (filterDeadline === 'overdue') matchesDeadline = isOverdue;
+    if (filterDeadline === 'active') matchesDeadline = !isDone;
     else if (filterDeadline === 'completed') matchesDeadline = isDone;
 
     return matchesSearch && matchesCourse && matchesDeadline;
@@ -354,19 +416,19 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
             {isAdmin ? 'Reviewing Student Progress' : 'Your Academic Overview'}
           </p>
         </div>
-        <div className="flex items-center gap-3 bg-white px-4 py-2.5 rounded-2xl border border-neutral-200 shadow-sm relative">
+        <div className="flex items-center gap-3 bg-white dark:bg-neutral-900 px-4 py-2.5 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm relative transition-colors">
           <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-          <span className="text-[11px] font-medium text-neutral-500 tracking-tight">System Online</span>
+          <span className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 tracking-tight">System Online</span>
           
-          <div className="w-px h-3 bg-neutral-200 mx-1" />
+          <div className="w-px h-3 bg-neutral-200 dark:bg-neutral-800 mx-1" />
           
           <button 
             onClick={() => setShowNotifications(!showNotifications)}
-            className="relative p-1.5 hover:bg-neutral-50 rounded-lg transition-colors group"
+            className="relative p-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800 rounded-lg transition-colors group"
           >
-            <Bell className={`w-4 h-4 transition-colors ${notifications.some(n => !n.read) ? 'text-blue-600' : 'text-neutral-500 group-hover:text-neutral-900'}`} />
+            <Bell className={`w-4 h-4 transition-colors ${notifications.some(n => !n.read) ? 'text-blue-600' : 'text-neutral-500 dark:text-neutral-400 group-hover:text-neutral-900 dark:group-hover:text-neutral-100'}`} />
             {notifications.some(n => !n.read) && (
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-600 rounded-full border-2 border-white" />
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-600 rounded-full border-2 border-white dark:border-neutral-900" />
             )}
           </button>
 
@@ -450,13 +512,13 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.05 }}
-            className="bg-white p-6 rounded-2xl border border-neutral-200 shadow-sm flex items-center justify-between group hover:border-neutral-300 transition-all duration-200 cursor-default"
+            className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm flex items-center justify-between group hover:border-neutral-300 dark:hover:border-neutral-700 transition-all duration-200 cursor-default"
           >
             <div>
-              <p className="text-[11px] font-medium text-neutral-500 mb-1">{stat.label}</p>
-              <h3 className="text-2xl font-semibold text-neutral-900 tracking-tight">{stat.value}</h3>
+              <p className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 mb-1">{stat.label}</p>
+              <h3 className="text-2xl font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">{stat.value}</h3>
             </div>
-            <div className={`w-10 h-10 ${stat.bg} rounded-xl flex items-center justify-center transition-all duration-200`}>
+            <div className={`w-10 h-10 ${stat.bg} dark:bg-opacity-20 rounded-xl flex items-center justify-center transition-all duration-200`}>
               <stat.icon className={`w-5 h-5 ${stat.color}`} />
             </div>
           </motion.div>
@@ -464,18 +526,18 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       </div>
 
       {/* Main Content Area */}
-      <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
+      <div className="bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm overflow-hidden transition-colors">
         {/* Tab Header */}
-        <div className="px-6 py-4 border-b border-neutral-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-center gap-1 bg-neutral-100/50 p-1 rounded-xl w-fit">
+        <div className="px-4 sm:px-6 py-4 border-b border-neutral-100 dark:border-neutral-800 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-center gap-1 bg-neutral-100/50 dark:bg-neutral-800 p-1 rounded-xl w-full sm:w-fit overflow-x-auto no-scrollbar">
             {(['assignments', 'announcements', 'history'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-4 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-200 ${
+                className={`flex-1 sm:flex-none px-3 sm:px-4 py-1.5 rounded-lg text-[11px] sm:text-[12px] font-medium transition-all duration-200 whitespace-nowrap ${
                   activeTab === tab 
-                    ? 'bg-white text-neutral-900 shadow-sm' 
-                    : 'text-neutral-500 hover:text-neutral-700'
+                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm' 
+                    : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'
                 }`}
               >
                 {tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -483,40 +545,40 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center gap-4">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-4">
             {activeTab === 'assignments' && (
               <>
-                <div className="flex items-center gap-1 bg-neutral-100 p-1 rounded-xl">
-                  {(['upcoming', 'overdue', 'completed'] as const).map((f) => (
+                <div className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-800 p-1 rounded-xl">
+                  {(['active', 'completed'] as const).map((f) => (
                     <button
                       key={f}
                       onClick={() => setFilterDeadline(f)}
                       className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
                         filterDeadline === f 
-                          ? 'bg-white text-neutral-900 shadow-sm' 
-                          : 'text-neutral-400 hover:text-neutral-600'
+                          ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm' 
+                          : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300'
                       }`}
                     >
                       {f}
                     </button>
                   ))}
                 </div>
-                <div className="relative flex-1 md:flex-none">
+                <div className="relative flex-1 xs:flex-none min-w-[140px]">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-400" />
                   <input 
                     type="text"
                     placeholder="Search tasks..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-9 pr-4 py-2 bg-neutral-50 border border-neutral-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-neutral-900/5 transition-all w-full md:w-48"
+                    className="pl-9 pr-4 py-2 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-[12px] sm:text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none focus:ring-2 focus:ring-neutral-900/5 transition-all w-full md:w-48"
                   />
                 </div>
-                <div className="relative flex-1 md:flex-none">
+                <div className="relative flex-1 xs:flex-none min-w-[140px]">
                   <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-400" />
                   <select
                     value={filterCourse}
                     onChange={(e) => setFilterCourse(e.target.value)}
-                    className="pl-9 pr-8 py-2 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-neutral-900/5 transition-all cursor-pointer appearance-none w-full md:w-40"
+                    className="pl-9 pr-8 py-2 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-[10px] sm:text-xs font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none focus:ring-2 focus:ring-neutral-900/5 transition-all cursor-pointer appearance-none w-full md:w-40"
                   >
                     <option value="all">All Courses</option>
                     {courses.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
@@ -525,10 +587,10 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                 {isAdmin && (
                   <button 
                     onClick={() => setShowAddModal(true)}
-                    className="bg-neutral-900 text-white px-4 py-2 rounded-xl text-xs font-medium hover:bg-neutral-800 transition-all flex items-center gap-2"
+                    className="flex-1 sm:flex-none justify-center bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 px-4 py-2 rounded-xl text-xs font-medium hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-all flex items-center gap-2"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    New Task
+                    <span className="xs:inline">New Task</span>
                   </button>
                 )}
               </>
@@ -564,11 +626,11 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.05 }}
-                      className="group bg-neutral-50/50 border border-neutral-200 rounded-2xl p-6 hover:bg-white hover:shadow-md hover:border-neutral-300 transition-all duration-200 relative overflow-hidden"
+                      className="group bg-neutral-50/50 dark:bg-neutral-800/20 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 hover:bg-white dark:hover:bg-neutral-800 hover:shadow-md hover:border-neutral-300 dark:hover:border-neutral-700 transition-all duration-200 relative overflow-hidden"
                     >
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2">
-                          <span className="px-2 py-0.5 bg-white border border-neutral-200 rounded-md text-[10px] font-medium text-neutral-500">
+                          <span className="px-2 py-0.5 bg-white dark:bg-neutral-700 border border-neutral-200 dark:border-neutral-600 rounded-md text-[10px] font-medium text-neutral-500 dark:text-neutral-400">
                             {assignment.course}
                           </span>
                           <span className={`px-2 py-0.5 rounded-md text-[10px] font-medium ${
@@ -587,29 +649,32 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                         </div>
                       </div>
 
-                      <h4 className="text-lg font-semibold text-neutral-900 mb-4 group-hover:text-neutral-700 transition-colors">
+                      <h4 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 mb-4 group-hover:text-neutral-700 dark:group-hover:text-neutral-300 transition-colors">
                         {assignment.title}
                       </h4>
 
-                      {/* Progress Bar */}
+                      {/* Time Progress Bar */}
                       <div className="mb-6 space-y-2">
-                        <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-neutral-400">
-                          <span>Progress</span>
-                          <span className="text-neutral-900">{Math.round((assignment.completed_hours / assignment.total_hours) * 100)}%</span>
+                        <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-neutral-400 dark:text-neutral-500">
+                          <span>Time Elapsed</span>
+                          <span className="text-neutral-900 dark:text-neutral-200">{calculateTimeProgress(assignment)}%</span>
                         </div>
-                        <div className="h-1.5 w-full bg-neutral-100 rounded-full overflow-hidden">
+                        <div className="h-1.5 w-full bg-neutral-100 dark:bg-neutral-800 rounded-full overflow-hidden">
                           <motion.div 
                             initial={{ width: 0 }}
-                            animate={{ width: `${(assignment.completed_hours / assignment.total_hours) * 100}%` }}
+                            animate={{ width: `${calculateTimeProgress(assignment)}%` }}
                             className={`h-full rounded-full ${
-                              isTaskDone(assignment) ? 'bg-emerald-500' : 'bg-blue-600'
+                              assignment.urgency === 'done' ? 'bg-emerald-500' : 
+                              calculateTimeProgress(assignment) === 100 ? 'bg-red-500' :
+                              calculateTimeProgress(assignment) > 80 ? 'bg-red-500' :
+                              calculateTimeProgress(assignment) > 50 ? 'bg-amber-500' : 'bg-blue-600'
                             }`}
                           />
                         </div>
                       </div>
                       
                       <div className="flex items-center justify-between pt-4 border-t border-neutral-100">
-                        <CountdownTimer deadline={assignment.deadline} />
+                        <CountdownTimer deadline={assignment.deadline} isDone={assignment.urgency === 'done'} />
                         {isAdmin && (
                           <div className="flex items-center gap-1">
                             <button 
@@ -713,32 +778,40 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                 className="space-y-2"
               >
                 {assignments.filter(a => isTaskDone(a)).length > 0 ? (
-                  assignments.filter(a => isTaskDone(a)).map((item, i) => (
-                    <motion.div
-                      key={item.id}
-                      initial={{ opacity: 0, y: 5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.05 }}
-                      className="bg-white border border-neutral-200 rounded-xl p-4 flex items-center justify-between group hover:border-neutral-300 transition-all duration-200"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        </div>
-                        <div>
-                          <h4 className="text-sm font-semibold text-neutral-900 tracking-tight">{item.title}</h4>
-                          <div className="text-[11px] text-neutral-500 font-medium mt-0.5 flex items-center gap-2">
-                            <span className="px-1.5 py-0.5 bg-neutral-100 rounded-md">{item.course}</span>
-                            <span>•</span>
-                            <span>Completed on {new Date(item.deadline).toLocaleDateString()}</span>
+                  assignments
+                    .filter(a => isTaskDone(a))
+                    .sort((a, b) => new Date(b.deadline).getTime() - new Date(a.deadline).getTime())
+                    .map((item, i) => {
+                      const isExpired = item.urgency !== 'done';
+                      return (
+                        <motion.div
+                          key={item.id}
+                          initial={{ opacity: 0, y: 5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: i * 0.05 }}
+                          className="bg-white border border-neutral-200 rounded-xl p-4 flex items-center justify-between group hover:border-neutral-300 transition-all duration-200"
+                        >
+                          <div className="flex items-center gap-4">
+                            <div className={`w-8 h-8 ${isExpired ? 'bg-neutral-50' : 'bg-emerald-50'} rounded-lg flex items-center justify-center`}>
+                              {isExpired ? <Clock className="w-4 h-4 text-neutral-400" /> : <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
+                            </div>
+                            <div>
+                              <h4 className={`text-sm font-semibold tracking-tight ${isExpired ? 'text-neutral-400 line-through' : 'text-neutral-900'}`}>{item.title}</h4>
+                              <div className="text-[11px] text-neutral-500 font-medium mt-0.5 flex items-center gap-2">
+                                <span className="px-1.5 py-0.5 bg-neutral-100 rounded-md">{item.course}</span>
+                                <span>•</span>
+                                <span className={isExpired ? 'text-neutral-400' : 'text-neutral-500'}>
+                                  {isExpired ? 'Expired' : 'Completed'} on {new Date(item.deadline).toLocaleDateString()}
+                                </span>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                      <div className="px-3 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-medium tracking-tight">
-                        Archived
-                      </div>
-                    </motion.div>
-                  ))
+                          <div className={`px-3 py-1 ${isExpired ? 'bg-neutral-100 text-neutral-400' : 'bg-emerald-50 text-emerald-600'} rounded-lg text-[10px] font-medium tracking-tight`}>
+                            {isExpired ? 'Overdue' : 'Archived'}
+                          </div>
+                        </motion.div>
+                      );
+                    })
                 ) : (
                   <div className="py-20 text-center">
                     <Trophy className="w-12 h-12 text-neutral-100 mx-auto mb-4" />
@@ -766,18 +839,18 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-lg bg-white rounded-[2.5rem] shadow-2xl p-10"
+              className="relative w-full max-w-lg bg-white dark:bg-neutral-900 rounded-[2.5rem] shadow-2xl dark:shadow-none p-10 border border-transparent dark:border-neutral-800 transition-colors"
             >
               <div className="flex items-center justify-between mb-8">
-                <h2 className="text-2xl font-black tracking-tight">{editingAssignment ? 'Edit' : 'New'} Assignment</h2>
-                <button onClick={() => { setShowAddModal(false); setEditingAssignment(null); }} className="p-2 hover:bg-neutral-100 rounded-full">
+                <h2 className="text-2xl font-black tracking-tight text-neutral-900 dark:text-neutral-50">{editingAssignment ? 'Edit' : 'New'} Assignment</h2>
+                <button onClick={() => { setShowAddModal(false); setEditingAssignment(null); }} className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-400 rounded-full transition-colors">
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
               <form onSubmit={editingAssignment ? handleEditAssignment : handleAddAssignment} className="space-y-6">
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 mb-2">Title</label>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-2">Title</label>
                   <input 
                     required
                     type="text"
@@ -786,42 +859,42 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                       ? setEditingAssignment({...editingAssignment, title: e.target.value})
                       : setNewAssignment({...newAssignment, title: e.target.value})}
                     placeholder="e.g. Math Problem Set 4"
-                    className="w-full px-6 py-4 bg-neutral-50 border border-neutral-100 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 transition-all font-bold"
+                    className="w-full px-6 py-4 bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-neutral-50/5 transition-all text-neutral-900 dark:text-neutral-50 font-bold placeholder:text-neutral-300 dark:placeholder:text-neutral-600"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 mb-2">Course</label>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-2">Course</label>
                   <select
                     required
                     value={editingAssignment ? editingAssignment.course : newAssignment.course}
                     onChange={e => editingAssignment 
                       ? setEditingAssignment({...editingAssignment, course: e.target.value})
                       : setNewAssignment({...newAssignment, course: e.target.value})}
-                    className="w-full px-6 py-4 bg-neutral-50 border border-neutral-100 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 transition-all font-bold"
+                    className="w-full px-6 py-4 bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-neutral-50/5 transition-all text-neutral-900 dark:text-neutral-50 font-bold appearance-none"
                   >
-                    <option value="">Select Course</option>
-                    {courses.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                    <option value="" className="dark:bg-neutral-900">Select Course</option>
+                    {courses.map(s => <option key={s.id} value={s.name} className="dark:bg-neutral-900">{s.name}</option>)}
                   </select>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 mb-2">Type</label>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-2">Type</label>
                     <select
                       value={editingAssignment ? editingAssignment.type : newAssignment.type}
                       onChange={e => editingAssignment 
                         ? setEditingAssignment({...editingAssignment, type: e.target.value as any})
                         : setNewAssignment({...newAssignment, type: e.target.value as any})}
-                      className="w-full px-6 py-4 bg-neutral-50 border border-neutral-100 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 transition-all font-bold"
+                      className="w-full px-6 py-4 bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-neutral-50/5 transition-all text-neutral-900 dark:text-neutral-50 font-bold appearance-none"
                     >
-                      <option value="Assignment">Assignment</option>
-                      <option value="Quiz">Quiz</option>
-                      <option value="Presentation">Presentation</option>
+                      <option value="Assignment" className="dark:bg-neutral-900">Assignment</option>
+                      <option value="Quiz" className="dark:bg-neutral-900">Quiz</option>
+                      <option value="Presentation" className="dark:bg-neutral-900">Presentation</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 mb-2">Deadline</label>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-2">Deadline</label>
                     <input 
                       required
                       type="datetime-local"
@@ -829,14 +902,14 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                       onChange={e => editingAssignment 
                         ? setEditingAssignment({...editingAssignment, deadline: e.target.value})
                         : setNewAssignment({...newAssignment, deadline: e.target.value})}
-                      className="w-full px-6 py-4 bg-neutral-50 border border-neutral-100 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 transition-all font-bold"
+                      className="w-full px-6 py-4 bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-neutral-50/5 transition-all text-neutral-900 dark:text-neutral-50 font-bold [color-scheme:light] dark:[color-scheme:dark]"
                     />
                   </div>
                 </div>
 
                 <button 
                   type="submit"
-                  className="w-full bg-neutral-900 text-white py-5 rounded-2xl font-black uppercase tracking-widest mt-4 hover:bg-neutral-800 transition-all shadow-xl shadow-neutral-200 active:scale-[0.98]"
+                  className="w-full bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-5 rounded-2xl font-black uppercase tracking-widest mt-4 hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-all shadow-xl shadow-neutral-200 dark:shadow-none active:scale-[0.98]"
                 >
                   {editingAssignment ? 'Update' : 'Create'} Assignment
                 </button>
@@ -858,42 +931,42 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-lg bg-white rounded-[2.5rem] shadow-2xl p-10"
+              className="relative w-full max-w-lg bg-white dark:bg-neutral-900 rounded-[2.5rem] shadow-2xl dark:shadow-none p-10 border border-transparent dark:border-neutral-800 transition-colors"
             >
               <div className="flex items-center justify-between mb-8">
-                <h2 className="text-2xl font-black tracking-tight">New Notice</h2>
-                <button onClick={() => setShowAddNoticeModal(false)} className="p-2 hover:bg-neutral-100 rounded-full">
+                <h2 className="text-2xl font-black tracking-tight text-neutral-900 dark:text-neutral-50">New Notice</h2>
+                <button onClick={() => setShowAddNoticeModal(false)} className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-400 rounded-full transition-colors">
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
               <form onSubmit={handleAddNotice} className="space-y-6">
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 mb-2">Title</label>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-2">Title</label>
                   <input 
                     required
                     type="text"
                     value={newNotice.title}
                     onChange={e => setNewNotice({...newNotice, title: e.target.value})}
                     placeholder="e.g. Exam Schedule Update"
-                    className="w-full px-6 py-4 bg-neutral-50 border border-neutral-100 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 transition-all font-bold"
+                    className="w-full px-6 py-4 bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-neutral-50/5 transition-all text-neutral-900 dark:text-neutral-50 font-bold placeholder:text-neutral-300 dark:placeholder:text-neutral-600"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 mb-2">Content</label>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-2">Content</label>
                   <textarea 
                     required
                     rows={4}
                     value={newNotice.content}
                     onChange={e => setNewNotice({...newNotice, content: e.target.value})}
                     placeholder="Enter notice details..."
-                    className="w-full px-6 py-4 bg-neutral-50 border border-neutral-100 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 transition-all font-bold resize-none"
+                    className="w-full px-6 py-4 bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-neutral-50/5 transition-all text-neutral-900 dark:text-neutral-50 font-bold resize-none placeholder:text-neutral-300 dark:placeholder:text-neutral-600"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 mb-2">Priority</label>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-2">Priority</label>
                   <div className="flex gap-2">
                     {['normal', 'important'].map((p) => (
                       <button
@@ -902,8 +975,8 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                         onClick={() => setNewNotice({ ...newNotice, priority: p as any })}
                         className={`flex-1 py-4 rounded-xl text-xs font-black uppercase tracking-widest border transition-all ${
                           newNotice.priority === p
-                            ? 'bg-neutral-900 text-white border-neutral-900'
-                            : 'bg-white text-neutral-400 border-neutral-100 hover:border-neutral-200'
+                            ? 'bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 border-neutral-900 dark:border-neutral-50'
+                            : 'bg-white dark:bg-neutral-900 text-neutral-400 dark:text-neutral-500 border-neutral-100 dark:border-neutral-800 hover:border-neutral-200 dark:hover:border-neutral-700'
                         }`}
                       >
                         {p}
@@ -914,7 +987,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
 
                 <button 
                   type="submit"
-                  className="w-full bg-neutral-900 text-white py-5 rounded-2xl font-black uppercase tracking-widest mt-4 hover:bg-neutral-800 transition-all shadow-xl shadow-neutral-200 active:scale-[0.98]"
+                  className="w-full bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-5 rounded-2xl font-black uppercase tracking-widest mt-4 hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-all shadow-xl shadow-neutral-200 dark:shadow-none active:scale-[0.98]"
                 >
                   Post Notice
                 </button>
