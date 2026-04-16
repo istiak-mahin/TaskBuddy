@@ -97,7 +97,8 @@ service cloud.firestore {
              isValidEmail(data.email) &&
              data.role in ['student', 'admin'] &&
              (!('username' in data) || isValidUsername(data.username)) &&
-             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 1000)) &&
+             // Supports profile uploader base64 data URLs (up to ~500KB source images).
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 700000)) &&
              (!('disabled' in data) || data.disabled is bool);
     }
 
