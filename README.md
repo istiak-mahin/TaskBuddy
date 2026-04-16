@@ -6,7 +6,7 @@
 
 This contains everything you need to run your app locally.
 
-View your app in AI Studio: https://ai.studio/apps/f091c68c-be29-4b3c-972e-8d32ea4f3c60
+View your site : https://istiak-mahin.github.io/Study-Tracker/
 
 ## Run Locally
 
