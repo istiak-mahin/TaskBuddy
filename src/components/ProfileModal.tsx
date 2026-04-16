@@ -65,6 +65,12 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 export default function ProfileModal({ profile, onClose, onUpdate, isAdmin = false }: ProfileModalProps) {
+  const normalizeUsername = (username: string) => {
+    const trimmed = username.trim();
+    if (!trimmed) return '';
+    return trimmed.startsWith('@') ? trimmed : `@${trimmed}`;
+  };
+
   const [formData, setFormData] = useState({
     name: profile.name || '',
     username: profile.username || '',
@@ -99,20 +105,18 @@ export default function ProfileModal({ profile, onClose, onUpdate, isAdmin = fal
 
     try {
       // Validate username
-      let finalUsername = formData.username.trim();
+      const finalUsername = normalizeUsername(formData.username);
       if (finalUsername) {
-        if (!finalUsername.startsWith('@')) {
-          finalUsername = '@' + finalUsername;
-        }
-        
         if (finalUsername.length < 4) {
           setError('Username must be at least 3 characters long (excluding @).');
           setSaving(false);
           return;
         }
 
-      // Check for uniqueness if it changed
-      if (finalUsername !== profile.username) {
+      const normalizedCurrentUsername = normalizeUsername(profile.username || '');
+
+      // Check for uniqueness for admins only if it changed
+      if (isAdmin && finalUsername !== normalizedCurrentUsername) {
         const q = query(collection(db, 'users'), where('username', '==', finalUsername));
         try {
           const querySnapshot = await getDocs(q);
