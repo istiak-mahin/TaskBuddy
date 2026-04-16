@@ -7,11 +7,12 @@ import {
   signOut,
   User,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, getDocFromServer } from 'firebase/firestore';
 import { UserProfile } from './types';
 import StudentDashboard from './components/StudentDashboard';
 import AdminDashboard from './components/AdminDashboard';
 import ProfileModal from './components/ProfileModal';
+import ThemeToggle from './components/ThemeToggle';
 import {
   LogOut,
   GraduationCap,
@@ -151,10 +152,29 @@ export default function App() {
         const userDocRef = doc(db, 'users', firebaseUser.uid);
 
         try {
-          const userDoc = await getDoc(userDocRef);
+          let userDoc;
+          try {
+            userDoc = await getDocFromServer(userDocRef);
+          } catch (e) {
+            userDoc = await getDoc(userDocRef);
+          }
 
           if (userDoc.exists()) {
             const userData = userDoc.data() as UserProfile;
+
+            // Claim username in /usernames if missing
+            if (userData.username) {
+              const usernameId = userData.username.toLowerCase();
+              const usernameRef = doc(db, 'usernames', usernameId);
+              try {
+                const uDoc = await getDoc(usernameRef);
+                if (!uDoc.exists()) {
+                  await setDoc(usernameRef, { uid: firebaseUser.uid });
+                }
+              } catch (e) {
+                console.warn('Could not claim username mapping:', e);
+              }
+            }
 
             if (userData.disabled) {
               setError('Your account has been disabled. Please contact the administrator.');
@@ -192,10 +212,9 @@ export default function App() {
         } catch (error) {
           console.error('Error fetching user profile:', error);
           if (isMounted) {
-            setError('Failed to load user profile. Please try again.');
+            setError('Failed to load user profile. Please check your connection.');
           }
-          // Need detailed debug? Uncomment this:
-          // handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
+          handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
         } finally {
           if (isMounted) {
             setLoading(false);
@@ -249,35 +268,35 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-neutral-400" />
+      <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 flex items-center justify-center transition-colors duration-300">
+        <Loader2 className="w-8 h-8 animate-spin text-neutral-400 dark:text-neutral-600" />
       </div>
     );
   }
 
   if (!user || !profile) {
     return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center p-6 font-sans">
-        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 pointer-events-none" />
-        <div className="absolute inset-0 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-40" />
+      <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 flex items-center justify-center p-6 font-sans transition-colors duration-300">
+        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 dark:opacity-10 pointer-events-none" />
+        <div className="absolute inset-0 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] dark:bg-[radial-gradient(#262626_1px,transparent_1px)] [background-size:16px_16px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-40" />
 
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-          className="max-w-[440px] w-full bg-white rounded-[2.5rem] p-10 shadow-[0_20px_50px_rgba(0,0,0,0.05)] border border-neutral-100 relative z-10"
+          className="max-w-[440px] w-full bg-white dark:bg-neutral-900 rounded-[2.5rem] p-10 shadow-[0_20px_50px_rgba(0,0,0,0.05)] dark:shadow-none border border-neutral-100 dark:border-neutral-800 relative z-10 transition-all"
         >
           <div className="flex flex-col items-center text-center mb-10">
             <motion.div
               whileHover={{ rotate: 10, scale: 1.1 }}
-              className="w-14 h-14 bg-neutral-900 rounded-2xl flex items-center justify-center mb-6 shadow-xl"
+              className="w-14 h-14 bg-neutral-900 dark:bg-neutral-50 rounded-2xl flex items-center justify-center mb-6 shadow-xl transition-colors"
             >
-              <GraduationCap className="w-8 h-8 text-white" />
+              <GraduationCap className="w-8 h-8 text-white dark:text-neutral-900" />
             </motion.div>
-            <h1 className="text-3xl font-black tracking-tight text-neutral-900 mb-3">
+            <h1 className="text-3xl font-black tracking-tight text-neutral-900 dark:text-neutral-50 mb-3">
               Welcome back
             </h1>
-            <p className="text-neutral-500 text-sm font-medium leading-relaxed max-w-[280px]">
+            <p className="text-neutral-500 dark:text-neutral-400 text-sm font-medium leading-relaxed max-w-[280px]">
               The most professional way to track your academic progress.
             </p>
           </div>
@@ -293,10 +312,10 @@ export default function App() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.4 + i * 0.1 }}
-                className="flex flex-col items-center gap-2 p-3 bg-neutral-50 rounded-2xl border border-neutral-100"
+                className="flex flex-col items-center gap-2 p-3 bg-neutral-50 dark:bg-neutral-800 rounded-2xl border border-neutral-100 dark:border-neutral-700 transition-colors"
               >
                 <f.icon className={`w-5 h-5 ${f.color}`} />
-                <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-400 dark:text-neutral-500">
                   {f.label}
                 </span>
               </motion.div>
@@ -318,15 +337,15 @@ export default function App() {
             <button
               onClick={handleGoogleLogin}
               disabled={isProcessing}
-              className="w-full group relative flex items-center justify-center gap-3 bg-neutral-900 text-white rounded-2xl py-4 font-bold hover:bg-neutral-800 transition-all duration-300 shadow-xl shadow-neutral-200 active:scale-[0.98] disabled:opacity-50 overflow-hidden"
+              className="w-full group relative flex items-center justify-center gap-3 bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 rounded-2xl py-4 font-bold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-all duration-300 shadow-xl shadow-neutral-200 dark:shadow-none active:scale-[0.98] disabled:opacity-50 overflow-hidden"
             >
               {isProcessing ? (
-                <Loader2 className="w-5 h-5 animate-spin text-white" />
+                <Loader2 className="w-5 h-5 animate-spin text-white dark:text-neutral-900" />
               ) : (
                 <>
                   <img
                     src="https://www.google.com/favicon.ico"
-                    className="w-5 h-5 brightness-0 invert"
+                    className="w-5 h-5 brightness-0 invert dark:invert-0"
                     alt="Google"
                   />
                   <span>Continue with Google</span>
@@ -334,13 +353,13 @@ export default function App() {
               )}
             </button>
 
-            <p className="text-center text-[11px] text-neutral-400 font-medium px-6 leading-relaxed">
+            <p className="text-center text-[11px] text-neutral-400 dark:text-neutral-500 font-medium px-6 leading-relaxed">
               By continuing, you agree to our{' '}
-              <span className="underline cursor-pointer hover:text-neutral-600">
+              <span className="underline cursor-pointer hover:text-neutral-600 dark:hover:text-neutral-300">
                 Terms
               </span>{' '}
               and{' '}
-              <span className="underline cursor-pointer hover:text-neutral-600">
+              <span className="underline cursor-pointer hover:text-neutral-600 dark:hover:text-neutral-300">
                 Privacy Policy
               </span>
               .
@@ -355,37 +374,38 @@ export default function App() {
     profile.role === 'admin' || profile.email === 'carlesirodriguez7@gmail.com';
 
   return (
-    <div className="min-h-screen bg-neutral-50 font-sans">
-      <nav className="bg-white/80 backdrop-blur-md border-b border-neutral-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-4 md:gap-8">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-neutral-900 rounded-xl flex items-center justify-center shadow-lg">
-                <GraduationCap className="w-6 h-6 text-white" />
+    <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 font-sans transition-colors duration-300">
+      <nav className="bg-white/80 dark:bg-neutral-900/80 backdrop-blur-md border-b border-neutral-200 dark:border-neutral-800 sticky top-0 z-50 transition-colors duration-300">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
+          <div className="flex items-center gap-2 md:gap-8">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-neutral-900 dark:bg-neutral-50 rounded-xl flex items-center justify-center shadow-lg transition-colors">
+                <GraduationCap className="w-5 h-5 sm:w-6 sm:h-6 text-white dark:text-neutral-900" />
               </div>
-              <span className="font-black text-xl tracking-tighter uppercase hidden sm:inline">
+              <span className="font-black text-lg sm:text-xl tracking-tighter uppercase hidden sm:inline text-neutral-900 dark:text-neutral-50">
                 Study.
               </span>
             </div>
 
             {isAdmin && (
-              <div className="flex items-center gap-1 bg-neutral-100 p-1 rounded-2xl">
+              <div className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-800 p-1 rounded-2xl transition-colors">
                 <button
                   onClick={() => setView('dashboard')}
                   className={`px-3 md:px-6 py-2 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-widest transition-all ${
                     view === 'dashboard'
-                      ? 'bg-white text-neutral-900 shadow-sm'
-                      : 'text-neutral-400 hover:text-neutral-600'
+                      ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300'
                   }`}
                 >
-                  Dashboard
+                  <span className="hidden xs:inline">Dashboard</span>
+                  <span className="xs:hidden">Dash</span>
                 </button>
                 <button
                   onClick={() => setView('admin')}
                   className={`px-3 md:px-6 py-2 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-widest transition-all ${
                     view === 'admin'
-                      ? 'bg-white text-neutral-900 shadow-sm'
-                      : 'text-neutral-400 hover:text-neutral-600'
+                      ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300'
                   }`}
                 >
                   Admin
@@ -394,20 +414,22 @@ export default function App() {
             )}
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2 sm:gap-4">
+            <ThemeToggle />
+            
             <button
               onClick={() => setShowProfileModal(true)}
-              className="flex items-center gap-4 group"
+              className="flex items-center gap-2 sm:gap-4 group"
             >
-              <div className="text-right hidden sm:block">
-                <p className="text-sm font-black leading-none group-hover:text-neutral-600 transition-colors uppercase tracking-tight">
+              <div className="text-right hidden md:block">
+                <p className="text-sm font-black leading-none group-hover:text-neutral-600 dark:group-hover:text-neutral-300 dark:text-neutral-100 transition-colors uppercase tracking-tight">
                   {profile.username || profile.name}
                 </p>
-                <p className="text-[9px] text-neutral-400 mt-1 uppercase font-black tracking-[0.2em] opacity-60">
+                <p className="text-[9px] text-neutral-400 dark:text-neutral-500 mt-1 uppercase font-black tracking-[0.2em] opacity-60">
                   {profile.role}
                 </p>
               </div>
-              <div className="w-12 h-12 rounded-2xl bg-neutral-100 border-2 border-transparent group-hover:border-neutral-900 transition-all overflow-hidden shadow-sm">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-neutral-100 dark:bg-neutral-800 border-2 border-transparent group-hover:border-neutral-900 dark:group-hover:border-neutral-50 transition-all overflow-hidden shadow-sm">
                 {profile.photoURL ? (
                   <img
                     src={profile.photoURL}
@@ -417,7 +439,7 @@ export default function App() {
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
-                    <UserIcon className="w-6 h-6 text-neutral-400" />
+                    <UserIcon className="w-5 h-5 sm:w-6 sm:h-6 text-neutral-400 dark:text-neutral-500" />
                   </div>
                 )}
               </div>
@@ -425,10 +447,10 @@ export default function App() {
 
             <button
               onClick={handleLogout}
-              className="w-10 h-10 flex items-center justify-center text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+              className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center text-neutral-400 dark:text-neutral-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-all"
               title="Sign Out"
             >
-              <LogOut className="w-5 h-5" />
+              <LogOut className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
           </div>
         </div>
@@ -438,6 +460,7 @@ export default function App() {
         {showProfileModal && profile && (
           <ProfileModal
             profile={profile}
+            isAdmin={isAdmin}
             onClose={() => setShowProfileModal(false)}
             onUpdate={(updated) =>
               setProfile((prev) => (prev ? { ...prev, ...updated } : null))
