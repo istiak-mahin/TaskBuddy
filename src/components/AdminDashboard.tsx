@@ -129,7 +129,7 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
     title: '',
     course: '',
     deadline: '',
-    type: 'Assignment' as 'Quiz' | 'Assignment' | 'Presentation',
+    type: 'Assignment' as 'Quiz' | 'Assignment' | 'Presentation' | 'Lab',
     syllabus: '',
   });
 
@@ -755,8 +755,8 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
 
                 <div className="space-y-2">
                   <label className="text-[11px] font-bold text-neutral-500 dark:text-neutral-400 uppercase tracking-widest ml-1">Task Type</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {['Quiz', 'Assignment', 'Presentation'].map((t) => (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {['Quiz', 'Assignment', 'Presentation', 'Lab'].map((t) => (
                       <button
                         key={t}
                         type="button"
@@ -988,7 +988,7 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
                     ) : (
                       allAssignments
                         .filter(a => isTaskDone(a))
-                        .sort((a, b) => new Date(b.deadline).getTime() - new Date(a.deadline).getTime())
+                        .sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())
                         .map(assignment => {
                         const student = users.find(u => u.uid === assignment.userId);
                         const isExpired = new Date(assignment.deadline).getTime() <= currentTime.getTime();

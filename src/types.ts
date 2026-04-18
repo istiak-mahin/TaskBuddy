@@ -21,7 +21,7 @@ export interface Assignment {
   completed_hours: number;
   urgency?: 'low' | 'medium' | 'urgent' | 'overdue' | 'done';
   createdAt?: any;
-  type: 'Quiz' | 'Assignment' | 'Presentation';
+  type: 'Quiz' | 'Assignment' | 'Presentation' | 'Lab';
   syllabus?: string;
 }
 

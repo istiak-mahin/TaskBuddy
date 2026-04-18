@@ -131,7 +131,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
     title: '',
     course: '',
     deadline: '',
-    type: 'Assignment' as 'Quiz' | 'Assignment' | 'Presentation',
+    type: 'Assignment' as 'Quiz' | 'Assignment' | 'Presentation' | 'Lab',
     syllabus: '',
   });
 
@@ -389,7 +389,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
     else if (filterDeadline === 'completed') matchesDeadline = isDone;
 
     return matchesSearch && matchesCourse && matchesDeadline;
-  });
+  }).sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
 
   const stats = [
     { 
@@ -680,6 +680,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                           <span className={`px-2 py-0.5 rounded-md text-[10px] font-medium ${
                             assignment.type === 'Quiz' ? 'bg-purple-50 text-purple-600 border border-purple-100' :
                             assignment.type === 'Presentation' ? 'bg-blue-50 text-blue-600 border border-blue-100' :
+                            assignment.type === 'Lab' ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' :
                             'bg-neutral-900 text-white'
                           }`}>
                             {assignment.type}
@@ -830,7 +831,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                 {assignments.filter(a => isTaskDone(a)).length > 0 ? (
                   assignments
                     .filter(a => isTaskDone(a))
-                    .sort((a, b) => new Date(b.deadline).getTime() - new Date(a.deadline).getTime())
+                    .sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())
                     .map((item, i) => {
                       const isExpired = item.urgency !== 'done';
                       return (
@@ -1029,6 +1030,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                       <option value="Assignment" className="dark:bg-neutral-900">Assignment</option>
                       <option value="Quiz" className="dark:bg-neutral-900">Quiz</option>
                       <option value="Presentation" className="dark:bg-neutral-900">Presentation</option>
+                      <option value="Lab" className="dark:bg-neutral-900">Lab</option>
                     </select>
                   </div>
                   <div>
