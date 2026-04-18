@@ -324,21 +324,18 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
         assignmentId: assignment.id
       });
 
-      // 2. Send Email Reminder via Server (not available on GitHub Pages static hosting)
-      if (import.meta.env.VITE_GITHUB_PAGES !== 'true') {
-        try {
-          await fetch('/api/reminders/email', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: studentId, title, message })
-          });
-        } catch (e) {
-          console.error('Failed to trigger email reminder:', e);
-        }
+      // 2. Send Email Reminder via Server
+      try {
+        await fetch('/api/reminders/email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: studentId, title, message })
+        });
+      } catch (e) {
+        console.error('Failed to trigger email reminder:', e);
       }
 
-      const emailNote = import.meta.env.VITE_GITHUB_PAGES === 'true' ? ' (email delivery unavailable on this deployment)' : ' and Email';
-      alert(`Reminder sent to student (In-app${emailNote}!`);
+      alert('Reminder sent to student (In-app and Email)!');
     } catch (error) {
       console.error('Error sending reminder:', error);
     }

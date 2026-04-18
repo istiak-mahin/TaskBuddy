@@ -284,24 +284,24 @@ export default function App() {
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-          className="max-w-[440px] w-full bg-white dark:bg-neutral-900 rounded-[2.5rem] p-10 shadow-[0_20px_50px_rgba(0,0,0,0.05)] dark:shadow-none border border-neutral-100 dark:border-neutral-800 relative z-10 transition-all"
+          className="max-w-[380px] w-full bg-white dark:bg-neutral-900 rounded-[2.5rem] p-8 shadow-[0_20px_50px_rgba(0,0,0,0.05)] dark:shadow-none border border-neutral-100 dark:border-neutral-800 relative z-10 transition-all"
         >
-          <div className="flex flex-col items-center text-center mb-10">
+          <div className="flex flex-col items-center text-center mb-8">
             <motion.div
               whileHover={{ rotate: 10, scale: 1.1 }}
-              className="w-14 h-14 bg-neutral-900 dark:bg-neutral-50 rounded-2xl flex items-center justify-center mb-6 shadow-xl transition-colors"
+              className="w-12 h-12 bg-neutral-900 dark:bg-neutral-50 rounded-2xl flex items-center justify-center mb-5 shadow-xl transition-colors"
             >
-              <GraduationCap className="w-8 h-8 text-white dark:text-neutral-900" />
+              <GraduationCap className="w-6 h-6 text-white dark:text-neutral-900" />
             </motion.div>
-            <h1 className="text-3xl font-black tracking-tight text-neutral-900 dark:text-neutral-50 mb-3">
+            <h1 className="text-2xl font-black tracking-tight text-neutral-900 dark:text-neutral-50 mb-2">
               Welcome back
             </h1>
-            <p className="text-neutral-500 dark:text-neutral-400 text-sm font-medium leading-relaxed max-w-[280px]">
+            <p className="text-neutral-500 dark:text-neutral-400 text-[13px] font-medium leading-relaxed max-w-[240px]">
               The most professional way to track your academic progress.
             </p>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 mb-10">
+          <div className="grid grid-cols-3 gap-3 mb-8">
             {[
               { icon: Sparkles, label: 'Clean', color: 'text-amber-500' },
               { icon: ShieldCheck, label: 'Secure', color: 'text-blue-500' },
@@ -312,10 +312,10 @@ export default function App() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.4 + i * 0.1 }}
-                className="flex flex-col items-center gap-2 p-3 bg-neutral-50 dark:bg-neutral-800 rounded-2xl border border-neutral-100 dark:border-neutral-700 transition-colors"
+                className="flex flex-col items-center gap-2 p-2.5 bg-neutral-50 dark:bg-neutral-800 rounded-2xl border border-neutral-100 dark:border-neutral-700 transition-colors"
               >
-                <f.icon className={`w-5 h-5 ${f.color}`} />
-                <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-400 dark:text-neutral-500">
+                <f.icon className={`w-4 h-4 ${f.color}`} />
+                <span className="text-[9px] font-bold uppercase tracking-widest text-neutral-400 dark:text-neutral-500">
                   {f.label}
                 </span>
               </motion.div>
@@ -327,9 +327,9 @@ export default function App() {
               <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="p-4 bg-red-50 text-red-600 text-xs font-bold rounded-2xl border border-red-100 flex items-center gap-3"
+                className="p-3.5 bg-red-50 text-red-600 text-[10px] font-bold rounded-2xl border border-red-100 flex items-center gap-3"
               >
-                <X className="w-4 h-4 flex-shrink-0" />
+                <X className="w-3.5 h-3.5 flex-shrink-0" />
                 {error}
               </motion.div>
             )}
@@ -337,7 +337,7 @@ export default function App() {
             <button
               onClick={handleGoogleLogin}
               disabled={isProcessing}
-              className="w-full group relative flex items-center justify-center gap-3 bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 rounded-2xl py-4 font-bold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-all duration-300 shadow-xl shadow-neutral-200 dark:shadow-none active:scale-[0.98] disabled:opacity-50 overflow-hidden"
+              className="w-full group relative flex items-center justify-center gap-3 bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 rounded-2xl py-3.5 font-bold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-all duration-300 shadow-xl shadow-neutral-200 dark:shadow-none active:scale-[0.98] disabled:opacity-50 overflow-hidden text-sm"
             >
               {isProcessing ? (
                 <Loader2 className="w-5 h-5 animate-spin text-white dark:text-neutral-900" />
@@ -364,6 +364,19 @@ export default function App() {
               </span>
               .
             </p>
+
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.8 }}
+              className="pt-2 text-center"
+            >
+              <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] sm:tracking-[0.3em] text-neutral-300 dark:text-neutral-600 flex items-center justify-center gap-2 whitespace-nowrap">
+                <span className="w-3 sm:w-4 h-px bg-neutral-100 dark:bg-neutral-800" />
+                Developed by Team Phantom
+                <span className="w-3 sm:w-4 h-px bg-neutral-100 dark:bg-neutral-800" />
+              </p>
+            </motion.div>
           </div>
         </motion.div>
       </div>

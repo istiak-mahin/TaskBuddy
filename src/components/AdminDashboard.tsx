@@ -129,8 +129,8 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
     title: '',
     course: '',
     deadline: '',
-    userId: '',
     type: 'Assignment' as 'Quiz' | 'Assignment' | 'Presentation',
+    syllabus: '',
   });
 
   const [editingCourse, setEditingCourse] = useState<Course | null>(null);
@@ -287,19 +287,20 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
 
   const handleAddAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newAssignment.title.trim() || !newAssignment.course || !newAssignment.deadline || !newAssignment.userId) return;
+    if (!newAssignment.title.trim() || !newAssignment.course || !newAssignment.deadline) return;
     
     setIsUpdating(true);
     try {
       await addDoc(collection(db, 'assignments'), {
         ...newAssignment,
+        userId: profile.uid, // Default to the admin themselves if no student is selected
         total_hours: 1, // Default to 1 to avoid division by zero
         completed_hours: 0,
         urgency: calculateUrgency(newAssignment.deadline, 0, 1),
         createdBy: 'admin',
         createdAt: serverTimestamp(),
       });
-      setNewAssignment({ title: '', course: '', deadline: '', userId: '', type: 'Assignment' });
+      setNewAssignment({ title: '', course: '', deadline: '', type: 'Assignment', syllabus: '' });
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'assignments');
     } finally {
@@ -732,24 +733,6 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[11px] font-bold text-neutral-500 dark:text-neutral-400 uppercase tracking-widest ml-1">Assign to Student</label>
-                  <div className="relative">
-                    <Users className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
-                    <select 
-                      required
-                      value={newAssignment.userId}
-                      onChange={e => setNewAssignment({...newAssignment, userId: e.target.value})}
-                      className="w-full pl-11 pr-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-neutral-900/5 focus:border-neutral-900/20 transition-all appearance-none text-sm font-medium text-neutral-900 dark:text-neutral-50"
-                    >
-                      <option value="" className="dark:bg-neutral-900 text-neutral-900 dark:text-neutral-50">Select a student</option>
-                      {users.filter(u => u.role === 'student').map(student => (
-                        <option key={student.uid} value={student.uid} className="dark:bg-neutral-900 text-neutral-900 dark:text-neutral-50">{student.username || student.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
                   <label className="text-[11px] font-bold text-neutral-500 dark:text-neutral-400 uppercase tracking-widest ml-1">Course</label>
                   <div className="relative">
                     <BookOpen className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
@@ -787,6 +770,19 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
                         {t}
                       </button>
                     ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[11px] font-bold text-neutral-500 dark:text-neutral-400 uppercase tracking-widest ml-1">Syllabus / Details</label>
+                  <div className="relative">
+                    <textarea 
+                      value={newAssignment.syllabus}
+                      onChange={e => setNewAssignment({...newAssignment, syllabus: e.target.value})}
+                      placeholder="Enter topics or instructions..."
+                      rows={3}
+                      className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-neutral-900/5 focus:border-neutral-900/20 transition-all text-sm font-medium text-neutral-900 dark:text-neutral-50 resize-none"
+                    />
                   </div>
                 </div>
 
@@ -972,7 +968,7 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="bg-neutral-50/50 dark:bg-neutral-800/50 border-bottom border-neutral-100 dark:border-neutral-800">
+                    <tr className="bg-neutral-50/50 dark:bg-neutral-800/50 border-b border-neutral-100 dark:border-neutral-800">
                       <th className="px-8 py-5 text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Task Details</th>
                       <th className="px-8 py-5 text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Assigned To</th>
                       <th className="px-8 py-5 text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Status</th>
