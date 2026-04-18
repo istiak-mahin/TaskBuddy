@@ -7,9 +7,9 @@ export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
     plugins: [react(), tailwindcss()],
-    base: process.env.NODE_ENV === 'production' ? '/TaskBuddy/' : '/',
+    base: mode === 'production' ? env.BASE_PATH || '/TaskBuddy/' : '/',
     define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+      'process.env.GEMINI_API_KEY': JSON.stringify(process.env.GEMINI_API_KEY || env.GEMINI_API_KEY),
     },
     resolve: {
       alias: {
