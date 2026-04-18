@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../firebase';
 import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, orderBy, limit } from 'firebase/firestore';
 import { Assignment, UserProfile, Course, Announcement, AppNotification } from '../types';
@@ -132,6 +132,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
     course: '',
     deadline: '',
     type: 'Assignment' as 'Quiz' | 'Assignment' | 'Presentation',
+    syllabus: '',
   });
 
   const [showAddNoticeModal, setShowAddNoticeModal] = useState(false);
@@ -146,8 +147,14 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [docToDelete, setDocToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [viewingSyllabus, setViewingSyllabus] = useState<Assignment | null>(null);
 
   const [currentTime, setCurrentTime] = useState(new Date());
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  const scrollToContent = () => {
+    contentRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -262,7 +269,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
         createdAt: serverTimestamp(),
       });
       setShowAddModal(false);
-      setNewAssignment({ title: '', course: '', deadline: '', type: 'Assignment' });
+      setNewAssignment({ title: '', course: '', deadline: '', type: 'Assignment', syllabus: '' });
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'assignments');
     }
@@ -278,6 +285,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
         course: editingAssignment.course,
         deadline: editingAssignment.deadline,
         type: editingAssignment.type,
+        syllabus: editingAssignment.syllabus || '',
       });
       setEditingAssignment(null);
     } catch (error) {
@@ -384,9 +392,44 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
   });
 
   const stats = [
-    { label: 'Active Tasks', value: assignments.filter(a => !isTaskDone(a)).length, icon: Target, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-100' },
-    { label: 'Completed', value: assignments.filter(a => isTaskDone(a)).length, icon: Trophy, color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-100' },
-    { label: 'Notices', value: announcements.length, icon: Bell, color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-100' },
+    { 
+      label: 'Active Tasks', 
+      value: assignments.filter(a => !isTaskDone(a)).length, 
+      icon: Target, 
+      color: 'text-blue-600', 
+      bg: 'bg-blue-50', 
+      border: 'border-blue-100',
+      action: () => {
+        setActiveTab('assignments');
+        setFilterDeadline('active');
+        scrollToContent();
+      }
+    },
+    { 
+      label: 'Completed', 
+      value: assignments.filter(a => isTaskDone(a)).length, 
+      icon: Trophy, 
+      color: 'text-emerald-600', 
+      bg: 'bg-emerald-50', 
+      border: 'border-emerald-100',
+      action: () => {
+        setActiveTab('assignments');
+        setFilterDeadline('completed');
+        scrollToContent();
+      }
+    },
+    { 
+      label: 'Notices', 
+      value: announcements.length, 
+      icon: Bell, 
+      color: 'text-amber-600', 
+      bg: 'bg-amber-50', 
+      border: 'border-amber-100',
+      action: () => {
+        setActiveTab('announcements');
+        scrollToContent();
+      }
+    },
   ];
 
   if (loading) {
@@ -406,10 +449,10 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
         className="flex flex-col md:flex-row md:items-end justify-between gap-6"
       >
         <div>
-          <h1 className="text-4xl font-semibold text-neutral-900 tracking-tight mb-1">
+          <h1 className="text-4xl font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight mb-1">
             Hello, {profile.username || profile.name.split(' ')[0]}
           </h1>
-          <p className="text-neutral-500 font-medium text-sm">
+          <p className="text-neutral-500 dark:text-neutral-400 font-medium text-sm">
             {isAdmin ? 'Reviewing Student Progress' : 'Your Academic Overview'}
           </p>
         </div>
@@ -509,7 +552,8 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.05 }}
-            className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm flex items-center justify-between group hover:border-neutral-300 dark:hover:border-neutral-700 transition-all duration-200 cursor-default"
+            onClick={stat.action}
+            className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm flex items-center justify-between group hover:border-neutral-300 dark:hover:border-neutral-700 transition-all duration-200 cursor-pointer active:scale-[0.98]"
           >
             <div>
               <p className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 mb-1">{stat.label}</p>
@@ -523,7 +567,10 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       </div>
 
       {/* Main Content Area */}
-      <div className="bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm overflow-hidden transition-colors">
+      <div 
+        ref={contentRef}
+        className="bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm overflow-hidden transition-colors"
+      >
         {/* Tab Header */}
         <div className="px-4 sm:px-6 py-4 border-b border-neutral-100 dark:border-neutral-800 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-center gap-1 bg-neutral-100/50 dark:bg-neutral-800 p-1 rounded-xl w-full sm:w-fit overflow-x-auto no-scrollbar">
@@ -646,8 +693,14 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                         </div>
                       </div>
 
-                      <h4 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 mb-4 group-hover:text-neutral-700 dark:group-hover:text-neutral-300 transition-colors">
+                      <h4 
+                        onClick={() => setViewingSyllabus(assignment)}
+                        className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 mb-4 group-hover:text-neutral-700 dark:group-hover:text-neutral-300 transition-colors cursor-pointer flex items-center gap-2"
+                      >
                         {assignment.title}
+                        <div className="w-5 h-5 rounded-full bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Plus className="w-3 h-3 text-neutral-400" />
+                        </div>
                       </h4>
 
                       {/* Time Progress Bar */}
@@ -823,6 +876,81 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
 
       {/* Modals */}
       <AnimatePresence>
+        {viewingSyllabus && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setViewingSyllabus(null)}
+              className="absolute inset-0 bg-neutral-900/60 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-2xl bg-white dark:bg-neutral-900 rounded-[2.5rem] shadow-2xl p-10 border border-transparent dark:border-neutral-800 transition-colors max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="px-2 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded-md text-[10px] font-bold uppercase tracking-widest text-neutral-500">
+                      {viewingSyllabus.course}
+                    </span>
+                    <span className="px-2 py-0.5 bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 rounded-md text-[10px] font-bold uppercase tracking-widest">
+                      {viewingSyllabus.type}
+                    </span>
+                  </div>
+                  <h2 className="text-3xl font-black tracking-tight text-neutral-900 dark:text-neutral-50">{viewingSyllabus.title}</h2>
+                </div>
+                <button onClick={() => setViewingSyllabus(null)} className="p-3 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-400 rounded-full transition-colors">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-4 flex items-center gap-2">
+                    <BookOpen className="w-4 h-4" />
+                    Topic Details & Syllabus
+                  </h3>
+                  <div className="bg-neutral-50 dark:bg-neutral-800/50 rounded-3xl p-8 border border-neutral-100 dark:border-neutral-800">
+                    {viewingSyllabus.syllabus ? (
+                      <div className="prose dark:prose-invert max-w-none">
+                        <p className="whitespace-pre-wrap text-neutral-700 dark:text-neutral-300 font-medium leading-relaxed">
+                          {viewingSyllabus.syllabus}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="py-10 text-center">
+                        <p className="text-neutral-400 text-sm font-medium italic">No syllabus details provided for this assignment.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-6 bg-neutral-50 dark:bg-neutral-800/50 rounded-3xl border border-neutral-100 dark:border-neutral-800">
+                    <span className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-2">Deadline</span>
+                    <p className="text-lg font-bold text-neutral-900 dark:text-neutral-50">{new Date(viewingSyllabus.deadline).toLocaleString()}</p>
+                  </div>
+                  <div className="p-6 bg-neutral-50 dark:bg-neutral-800/50 rounded-3xl border border-neutral-100 dark:border-neutral-800">
+                    <span className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-2">Time Left</span>
+                    <CountdownTimer deadline={viewingSyllabus.deadline} isDone={viewingSyllabus.urgency === 'done'} />
+                  </div>
+                </div>
+              </div>
+
+              <button 
+                onClick={() => setViewingSyllabus(null)}
+                className="w-full bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-5 rounded-2xl font-black uppercase tracking-widest mt-10 hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-all shadow-xl active:scale-[0.98]"
+              >
+                Close View
+              </button>
+            </motion.div>
+          </div>
+        )}
+
         {(showAddModal || editingAssignment) && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div 
@@ -857,6 +985,19 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                       : setNewAssignment({...newAssignment, title: e.target.value})}
                     placeholder="e.g. Math Problem Set 4"
                     className="w-full px-6 py-4 bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-neutral-50/5 transition-all text-neutral-900 dark:text-neutral-50 font-bold placeholder:text-neutral-300 dark:placeholder:text-neutral-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-2">Syllabus / Details</label>
+                  <textarea 
+                    rows={3}
+                    value={editingAssignment ? (editingAssignment.syllabus || '') : newAssignment.syllabus}
+                    onChange={e => editingAssignment 
+                      ? setEditingAssignment({...editingAssignment, syllabus: e.target.value})
+                      : setNewAssignment({...newAssignment, syllabus: e.target.value})}
+                    placeholder="Enter what topics will be covered..."
+                    className="w-full px-6 py-4 bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700 rounded-2xl focus:outline-none focus:ring-4 focus:ring-neutral-900/5 dark:focus:ring-neutral-50/5 transition-all text-neutral-900 dark:text-neutral-50 font-bold placeholder:text-neutral-300 dark:placeholder:text-neutral-600 resize-none"
                   />
                 </div>
 

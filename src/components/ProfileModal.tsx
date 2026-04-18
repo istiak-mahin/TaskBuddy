@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { auth, db } from '../firebase';
-import { doc, updateDoc, query, where, getDocs, collection, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import React, { useState, useRef } from 'react';
+import { auth, db, storage } from '../firebase';
+import { doc, updateDoc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { UserProfile } from '../types';
-import { X, Camera, User, Save, Loader2, AtSign, Trash2 } from 'lucide-react';
+import { X, Camera, User, Save, Loader2, AtSign, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface ProfileModalProps {
@@ -70,34 +71,70 @@ export default function ProfileModal({ profile, onClose, onUpdate, isAdmin = fal
     photoURL: profile.photoURL || '',
     role: profile.role || 'student',
   });
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewURL, setPreviewURL] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    setError(null);
+
     if (file) {
-      if (file.size > 500000) { // 500KB limit for base64
-        setError('Image is too large. Please choose an image under 500KB.');
+      console.log('File selected:', file.name, 'Size:', file.size, 'Type:', file.contentType);
+      
+      // 1. Validate File Type
+      if (!file.type.startsWith('image/')) {
+        setError('Please select a valid image file (PNG, JPG, etc).');
         return;
       }
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData(prev => ({ ...prev, photoURL: reader.result as string }));
-        setError(null);
-      };
-      reader.readAsDataURL(file);
+
+      // 2. Validate Size (5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        setError('Image is too large. Max size is 5MB.');
+        return;
+      }
+
+      // 3. Set for upload and preview
+      setSelectedFile(file);
+      const objectUrl = URL.createObjectURL(file);
+      setPreviewURL(objectUrl);
+      
+      // Clean up previous preview URL if any
+      return () => URL.revokeObjectURL(objectUrl);
     }
+  };
+
+  const removePhoto = () => {
+    setFormData(prev => ({ ...prev, photoURL: '' }));
+    setSelectedFile(null);
+    if (previewURL) URL.revokeObjectURL(previewURL);
+    setPreviewURL(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    console.log('Photo removed from form state');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Auth Check
+    if (!auth.currentUser) {
+      console.error('Submit attempted without active session');
+      setError('You must be signed in to update your profile.');
+      return;
+    }
+
     setSaving(true);
     setError(null);
     setSuccess(null);
 
+    console.log('--- Starting Profile Update Flow ---');
+    console.log('User ID:', profile.uid);
+
     try {
-      // Validate username
+      // 1. Username Transformation & Validation
       let finalUsername = formData.username.trim();
       if (finalUsername) {
         if (!finalUsername.startsWith('@')) {
@@ -110,12 +147,14 @@ export default function ProfileModal({ profile, onClose, onUpdate, isAdmin = fal
           return;
         }
 
-        // Check for uniqueness if it changed
+        // Check for uniqueness
         if (finalUsername !== profile.username) {
+          console.log('Checking username availability:', finalUsername);
           try {
             const usernameId = finalUsername.toLowerCase();
             const usernameDoc = await getDoc(doc(db, 'usernames', usernameId));
             if (usernameDoc.exists() && usernameDoc.data()?.uid !== profile.uid) {
+              console.warn('Username collision detected:', finalUsername);
               setError('This username is already taken. Please choose another one.');
               setSaving(false);
               return;
@@ -126,47 +165,80 @@ export default function ProfileModal({ profile, onClose, onUpdate, isAdmin = fal
         }
       }
 
+      let currentPhotoURL = formData.photoURL;
+
+      // 2. Storage Upload Flow
+      if (selectedFile) {
+        console.log('Upload Stage: Initiating file transfer to Firebase Storage...');
+        try {
+          const fileExtension = selectedFile.name.split('.').pop();
+          const storagePath = `profile_photos/${profile.uid}/${Date.now()}.${fileExtension}`;
+          const storageRef = ref(storage, storagePath);
+          
+          const uploadResult = await uploadBytes(storageRef, selectedFile);
+          console.log('Upload Stage: Successfully uploaded to', uploadResult.metadata.fullPath);
+          
+          currentPhotoURL = await getDownloadURL(storageRef);
+          console.log('Upload Stage: Download URL retrieved:', currentPhotoURL);
+        } catch (uploadErr) {
+          console.error('Upload Stage: Failed during transmission', uploadErr);
+          throw new Error('Photo upload failed. Please check your connection and try again.');
+        }
+      }
+
+      // 3. Prepare Firestore Updates
       const updates: Partial<UserProfile> = {
         name: formData.name.trim(),
         username: finalUsername || "",
-        photoURL: formData.photoURL,
+        photoURL: currentPhotoURL,
         role: formData.role as 'admin' | 'student'
       };
 
+      console.log('Database Stage: Writing profile changes to Firestore...');
       const userRef = doc(db, 'users', profile.uid);
-      try {
-        // Handle username mapping
-        if (finalUsername !== profile.username) {
-          // 1. If had an old username, delete it
-          if (profile.username) {
-            const oldUsernameRef = doc(db, 'usernames', profile.username.toLowerCase());
-            await deleteDoc(oldUsernameRef);
-          }
-          
-          // 2. If providing a new username, claim it
-          if (finalUsername) {
-            const newUsernameId = finalUsername.toLowerCase();
-            const newUsernameRef = doc(db, 'usernames', newUsernameId);
-            await setDoc(newUsernameRef, { uid: profile.uid });
-          }
+
+      // 4. Atomic Username Update Logic
+      if (finalUsername !== profile.username) {
+        if (profile.username) {
+          console.log('Database Stage: Releasing old username:', profile.username);
+          const oldUsernameRef = doc(db, 'usernames', profile.username.toLowerCase());
+          await deleteDoc(oldUsernameRef);
         }
         
-        await updateDoc(userRef, updates);
-        onUpdate(updates);
-        setSuccess('Profile updated successfully!');
-        setTimeout(() => onClose(), 1500);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `users/${profile.uid}`);
+        if (finalUsername) {
+          console.log('Database Stage: Claiming new username:', finalUsername);
+          const newUsernameId = finalUsername.toLowerCase();
+          const newUsernameRef = doc(db, 'usernames', newUsernameId);
+          await setDoc(newUsernameRef, { uid: profile.uid });
+        }
       }
-    } catch (err) {
-      if (err instanceof Error && err.message.includes('Firestore Error')) {
-        setError('Failed to update profile. Security rules violation.');
+      
+      // 5. User Doc Update
+      await updateDoc(userRef, updates);
+      console.log('Database Stage: Success. Profile finalized.');
+
+      // 6. Finalize UI State
+      onUpdate(updates);
+      setSuccess('Your profile has been successfully updated!');
+      
+      // Clear large state
+      if (previewURL) {
+        URL.revokeObjectURL(previewURL);
+        setPreviewURL(null);
+      }
+      setSelectedFile(null);
+
+      setTimeout(() => onClose(), 1500);
+    } catch (err: any) {
+      console.error('Profile Update Critical Failure:', err);
+      if (err.message && err.message.includes('Firestore Error')) {
+        setError('Security restriction: You lack permission to perform this update.');
       } else {
-        console.error('Error updating profile:', err);
-        setError('Failed to update profile. Please try again.');
+        setError(err.message || 'An unexpected error occurred. Please try again.');
       }
     } finally {
       setSaving(false);
+      console.log('--- Profile Update Flow Terminated ---');
     }
   };
 
@@ -196,45 +268,65 @@ export default function ProfileModal({ profile, onClose, onUpdate, isAdmin = fal
           {/* Avatar Upload */}
           <div className="flex flex-col items-center gap-4">
             <div className="relative group">
-              <div className="w-24 h-24 rounded-3xl bg-neutral-100 dark:bg-neutral-800 border-2 border-neutral-200 dark:border-neutral-700 overflow-hidden flex items-center justify-center transition-colors">
-                {formData.photoURL ? (
-                  <img src={formData.photoURL} alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              <div className="w-24 h-24 rounded-3xl bg-neutral-100 dark:bg-neutral-800 border-2 border-neutral-200 dark:border-neutral-700 overflow-hidden flex items-center justify-center transition-all group-hover:border-neutral-300 dark:group-hover:border-neutral-600">
+                {(previewURL || formData.photoURL) ? (
+                  <img 
+                    src={previewURL || formData.photoURL} 
+                    alt="Profile" 
+                    className="w-full h-full object-cover" 
+                    referrerPolicy="no-referrer" 
+                  />
                 ) : (
                   <User className="w-10 h-10 text-neutral-300 dark:text-neutral-600" />
                 )}
+                {saving && (
+                  <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[2px] flex items-center justify-center">
+                    <Loader2 className="w-6 h-6 text-white animate-spin" />
+                  </div>
+                )}
               </div>
-              <div className="absolute -bottom-2 -right-2 flex gap-1">
-                {formData.photoURL && (
+              <div className="absolute -bottom-2 -right-2 flex gap-1.5">
+                {(previewURL || formData.photoURL) && (
                   <button 
                     type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, photoURL: '' }))}
-                    className="p-2 bg-red-500 text-white rounded-xl shadow-lg hover:bg-red-600 transition-colors"
+                    onClick={removePhoto}
+                    disabled={saving}
+                    className="p-2 bg-red-500 text-white rounded-xl shadow-lg hover:bg-red-600 transition-colors disabled:opacity-50"
                     title="Remove photo"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
                 )}
-                <label className="p-2 bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 rounded-xl cursor-pointer shadow-lg hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors">
+                <label className={`p-2 bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 rounded-xl shadow-lg hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors ${saving ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
                   <Camera className="w-4 h-4" />
-                  <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
+                  <input 
+                    ref={fileInputRef}
+                    type="file" 
+                    accept="image/*" 
+                    onChange={handleImageChange} 
+                    className="hidden" 
+                    disabled={saving}
+                  />
                 </label>
               </div>
             </div>
-            <p className="text-xs text-neutral-400 dark:text-neutral-500">
-              {formData.photoURL ? 'Change or remove your profile photo' : 'Upload a profile photo'}
+            <p className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
+              {saving ? 'Uploading your profile image...' : 
+               (previewURL || formData.photoURL) ? 'Ready to save profile changes' : 'Upload a profile photo'}
             </p>
           </div>
 
           {error && (
-            <div className="p-3 bg-red-50 dark:bg-red-900/10 text-red-600 dark:text-red-400 text-xs font-medium rounded-xl border border-red-100 dark:border-red-900/20 flex items-center gap-2">
-              <X className="w-4 h-4" />
-              {error}
+            <div className="p-4 bg-red-50 dark:bg-red-900/10 text-red-600 dark:text-red-400 text-xs font-semibold rounded-2xl border border-red-100 dark:border-red-900/20 flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
+              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <div className="flex-1 leading-relaxed">{error}</div>
             </div>
           )}
 
           {success && (
-            <div className="p-3 bg-green-50 dark:bg-green-900/10 text-green-600 dark:text-green-400 text-xs font-medium rounded-xl border border-green-100 dark:border-green-900/20">
-              {success}
+            <div className="p-4 bg-emerald-50 dark:bg-emerald-900/10 text-emerald-600 dark:text-emerald-400 text-xs font-semibold rounded-2xl border border-emerald-100 dark:border-emerald-900/20 flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
+              <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <div className="flex-1 leading-relaxed">{success}</div>
             </div>
           )}
 

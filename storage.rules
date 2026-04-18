@@ -1,0 +1,37 @@
+rules_version = '2';
+
+// Crafting a secure, production-ready storage architecture
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper function to verify authentication
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Helper function to verify ownership of a path
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Master Match: Profile Photos
+    // Hierarchy: /profile_photos/{userId}/{fileName}
+    match /profile_photos/{userId}/{allPaths=**} {
+      
+      // Allow PUBLIC Read (for profiles to be visible to others)
+      // If the app requires private profiles, this could be limited to isSignedIn()
+      allow read: if isSignedIn();
+      
+      // Allow WRITE only if the authenticated user owns this specific folder
+      // Constraint: Must be an image and under 5MB to prevent storage abuse
+      allow write: if isOwner(userId) && 
+                   request.resource.size < 5 * 1024 * 1024 &&
+                   request.resource.contentType.matches('image/.*');
+    }
+
+    // Default Deny: All other paths are locked by default
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

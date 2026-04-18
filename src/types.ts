@@ -22,6 +22,7 @@ export interface Assignment {
   urgency?: 'low' | 'medium' | 'urgent' | 'overdue' | 'done';
   createdAt?: any;
   type: 'Quiz' | 'Assignment' | 'Presentation';
+  syllabus?: string;
 }
 
 export interface Course {

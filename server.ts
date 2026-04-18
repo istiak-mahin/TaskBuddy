@@ -46,7 +46,7 @@ async function sendEmailReminder(userId: string, subject: string, htmlMessage: s
     const resend = new Resend(resendKey);
     
     await resend.emails.send({
-      from: 'StudyTracker <onboarding@resend.dev>',
+      from: 'TaskBuddy <onboarding@resend.dev>',
       to: email,
       subject: subject,
       html: htmlMessage,
@@ -86,7 +86,7 @@ async function startServer() {
         </div>
         <p style="color: #ef4444;"><b>Keep up with your tasks to ensure academic success!</b></p>
         <br>
-        <p style="font-size: 12px; color: #737373;">— Study Tracker Automated System</p>
+        <p style="font-size: 12px; color: #737373;">— TaskBuddy Automated System</p>
       </div>
     `;
 
@@ -172,7 +172,7 @@ async function startServer() {
               </div>
               <p style="color: #ef4444;"><b>Don't forget to submit on time!</b></p>
               <br>
-              <p style="font-size: 12px; color: #737373;">— Study Tracker Automated System</p>
+              <p style="font-size: 12px; color: #737373;">— TaskBuddy Automated System</p>
             </div>
           `;
 

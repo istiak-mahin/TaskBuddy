@@ -1,5 +1,5 @@
 {
-  "name": "Student Productivity Tracker",
-  "description": "A role-based productivity app for students to track assignments and admins to manage courses and announcements.",
+  "name": "TaskBuddy",
+  "description": "A collaborative productivity app for students to track tasks and admins to manage academics.",
   "requestFramePermissions": []
 }

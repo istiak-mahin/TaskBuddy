@@ -111,7 +111,7 @@ const Splash = ({ onComplete }: { onComplete: () => void }) => {
             className="text-center"
           >
             <h1 className="text-2xl font-black tracking-tighter text-neutral-900">
-              STUDY TRACKER
+              TaskBuddy
             </h1>
             <div className="h-1 w-12 bg-neutral-900 mx-auto mt-2 rounded-full" />
           </motion.div>
@@ -382,8 +382,8 @@ export default function App() {
               <div className="w-8 h-8 sm:w-10 sm:h-10 bg-neutral-900 dark:bg-neutral-50 rounded-xl flex items-center justify-center shadow-lg transition-colors">
                 <GraduationCap className="w-5 h-5 sm:w-6 sm:h-6 text-white dark:text-neutral-900" />
               </div>
-              <span className="font-black text-lg sm:text-xl tracking-tighter uppercase hidden sm:inline text-neutral-900 dark:text-neutral-50">
-                Study.
+              <span className="font-black text-lg sm:text-xl tracking-tighter hidden sm:inline text-neutral-900 dark:text-neutral-50">
+                TaskBuddy
               </span>
             </div>
 

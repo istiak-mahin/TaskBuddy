@@ -28,6 +28,7 @@
         "urgency": { "type": "string", "enum": ["low", "medium", "urgent", "overdue", "done"] },
         "createdAt": { "type": "string" },
         "type": { "type": "string", "enum": ["Quiz", "Assignment", "Presentation"] },
+        "syllabus": { "type": "string", "description": "Syllabus or topics for this assignment" },
         "userId": { "type": "string", "description": "UID of the student assigned to this task" }
       },
       "required": ["title", "course", "deadline", "type", "userId"]
