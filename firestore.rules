@@ -116,11 +116,12 @@ service cloud.firestore {
              data.course is string && data.course.size() > 0 && data.course.size() < 100 &&
              isValidDateString(data.deadline) &&
              data.userId is string && data.userId.size() > 0 &&
-             data.type in ['Quiz', 'Assignment', 'Presentation'] &&
+             data.type in ['Quiz', 'Assignment', 'Presentation', 'Lab'] &&
              (!('completed_hours' in data) || data.completed_hours is number) &&
              (!('total_hours' in data) || data.total_hours is number) &&
              (!('urgency' in data) || data.urgency is string) &&
              (!('createdBy' in data) || data.createdBy is string) &&
+             (!('syllabus' in data) || (data.syllabus is string && data.syllabus.size() < 2000)) &&
              (!('createdAt' in data) || data.createdAt is timestamp || isValidDateString(data.createdAt));
     }
 
