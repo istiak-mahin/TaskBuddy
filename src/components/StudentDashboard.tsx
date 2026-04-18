@@ -325,8 +325,11 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       });
 
       // 2. Send Email Reminder via Server
+      // VITE_API_BASE_URL should point to a hosted backend when deploying to
+      // static hosts (e.g. GitHub Pages) that cannot run server.ts.
+      const apiBase = import.meta.env.VITE_API_BASE_URL ?? '';
       try {
-        await fetch('/api/reminders/email', {
+        await fetch(`${apiBase}/api/reminders/email`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId: studentId, title, message })
