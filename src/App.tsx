@@ -8,7 +8,7 @@ import {
   User,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp, getDocFromServer } from 'firebase/firestore';
-import { UserProfile } from './types';
+import { UserProfile, OperationType, FirestoreErrorInfo } from './types';
 import StudentDashboard from './components/StudentDashboard';
 import AdminDashboard from './components/AdminDashboard';
 import ProfileModal from './components/ProfileModal';
@@ -24,34 +24,6 @@ import {
   Zap,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string;
-    email?: string | null;
-    emailVerified?: boolean;
-    isAnonymous?: boolean;
-    tenantId?: string | null;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
-    }[];
-  };
-}
 
 function handleFirestoreError(
   error: unknown,
@@ -162,7 +134,6 @@ export default function App() {
           if (userDoc.exists()) {
             const userData = userDoc.data() as UserProfile;
 
-            // Claim username in /usernames if missing
             if (userData.username) {
               const usernameId = userData.username.toLowerCase();
               const usernameRef = doc(db, 'usernames', usernameId);
@@ -429,7 +400,7 @@ export default function App() {
 
           <div className="flex items-center gap-2 sm:gap-4">
             <ThemeToggle />
-            
+
             <button
               onClick={() => setShowProfileModal(true)}
               className="flex items-center gap-2 sm:gap-4 group"

@@ -1,5 +1,6 @@
 {
   "name": "TaskBuddy",
   "description": "A collaborative productivity app for students to track tasks and admins to manage academics.",
-  "requestFramePermissions": []
+  "requestFramePermissions": ["camera"]
 }
+

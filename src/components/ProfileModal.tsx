@@ -1,44 +1,17 @@
 import React, { useState, useRef } from 'react';
 import { auth, db, storage } from '../firebase';
 import { doc, updateDoc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { UserProfile } from '../types';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { UserProfile, OperationType, FirestoreErrorInfo } from '../types';
 import { X, Camera, User, Save, Loader2, AtSign, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { compressImage, generateThumbnail } from '../lib/imageUtils';
 
 interface ProfileModalProps {
   profile: UserProfile;
   onClose: () => void;
   onUpdate: (updated: Partial<UserProfile>) => void;
   isAdmin?: boolean;
-}
-
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string;
-    email?: string | null;
-    emailVerified?: boolean;
-    isAnonymous?: boolean;
-    tenantId?: string | null;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
-    }[];
-  }
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
@@ -74,6 +47,7 @@ export default function ProfileModal({ profile, onClose, onUpdate, isAdmin = fal
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewURL, setPreviewURL] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -83,7 +57,11 @@ export default function ProfileModal({ profile, onClose, onUpdate, isAdmin = fal
     setError(null);
 
     if (file) {
-      console.log('File selected:', file.name, 'Size:', file.size, 'Type:', file.contentType);
+      console.log('File selected:', {
+        name: file.name,
+        size: `${(file.size / 1024 / 1024).toFixed(2)}MB`,
+        type: file.type
+      });
       
       // 1. Validate File Type
       if (!file.type.startsWith('image/')) {
@@ -118,127 +96,118 @@ export default function ProfileModal({ profile, onClose, onUpdate, isAdmin = fal
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Auth Check
+    console.log('[Audit] Profile sequence started.');
+
     if (!auth.currentUser) {
-      console.error('Submit attempted without active session');
-      setError('You must be signed in to update your profile.');
+      setError('Auth session missing. Please re-login.');
       return;
     }
 
     setSaving(true);
     setError(null);
     setSuccess(null);
-
-    console.log('--- Starting Profile Update Flow ---');
-    console.log('User ID:', profile.uid);
+    setUploadProgress(0);
 
     try {
-      // 1. Username Transformation & Validation
-      let finalUsername = formData.username.trim();
-      if (finalUsername) {
-        if (!finalUsername.startsWith('@')) {
-          finalUsername = '@' + finalUsername;
-        }
-        
-        if (finalUsername.length < 4) {
-          setError('Username must be at least 3 characters long (excluding @).');
-          setSaving(false);
-          return;
-        }
+      // 1. Username Normalization (Rules require '@' prefix)
+      let inputUsername = formData.username.trim();
+      if (inputUsername.startsWith('@')) {
+        inputUsername = inputUsername.substring(1);
+      }
 
-        // Check for uniqueness
+      let finalUsername = "";
+      if (inputUsername) {
+        // Validation: Alphanumeric + underscores, 3-15 chars
+        if (!/^[a-zA-Z0-9_]{3,15}$/.test(inputUsername)) {
+          throw new Error('Username must be 3-15 alphanumeric characters or underscores.');
+        }
+        // Prepend '@' as required by Firestore Security Rules
+        finalUsername = '@' + inputUsername;
+
         if (finalUsername !== profile.username) {
-          console.log('Checking username availability:', finalUsername);
-          try {
-            const usernameId = finalUsername.toLowerCase();
-            const usernameDoc = await getDoc(doc(db, 'usernames', usernameId));
-            if (usernameDoc.exists() && usernameDoc.data()?.uid !== profile.uid) {
-              console.warn('Username collision detected:', finalUsername);
-              setError('This username is already taken. Please choose another one.');
-              setSaving(false);
-              return;
-            }
-          } catch (err) {
-            handleFirestoreError(err, OperationType.GET, `usernames/${finalUsername.toLowerCase()}`);
+          const usernameDocId = finalUsername.toLowerCase();
+          const uDoc = await getDoc(doc(db, 'usernames', usernameDocId));
+          if (uDoc.exists() && uDoc.data()?.uid !== profile.uid) {
+            throw new Error('This username is already taken. Please try another.');
           }
         }
       }
 
       let currentPhotoURL = formData.photoURL;
 
-      // 2. Storage Upload Flow
+      // 2. Audited Image Pipeline
       if (selectedFile) {
-        console.log('Upload Stage: Initiating file transfer to Firebase Storage...');
         try {
-          const fileExtension = selectedFile.name.split('.').pop();
-          const storagePath = `profile_photos/${profile.uid}/${Date.now()}.${fileExtension}`;
+          setUploadProgress(10); // Compression start
+          const compressed = await compressImage(selectedFile);
+          const fileName = `profile_${profile.uid}_${Date.now()}.jpg`;
+          const storagePath = `profile_photos/${profile.uid}/${fileName}`;
           const storageRef = ref(storage, storagePath);
-          
-          const uploadResult = await uploadBytes(storageRef, selectedFile);
-          console.log('Upload Stage: Successfully uploaded to', uploadResult.metadata.fullPath);
-          
-          currentPhotoURL = await getDownloadURL(storageRef);
-          console.log('Upload Stage: Download URL retrieved:', currentPhotoURL);
-        } catch (uploadErr) {
-          console.error('Upload Stage: Failed during transmission', uploadErr);
-          throw new Error('Photo upload failed. Please check your connection and try again.');
+
+          const uploadTask = uploadBytesResumable(storageRef, compressed, { 
+            contentType: 'image/jpeg',
+            cacheControl: 'public,max-age=31536000'
+          });
+
+          await Promise.race([
+            new Promise<void>((resolve, reject) => {
+              uploadTask.on('state_changed', 
+                (snap) => {
+                  const pct = 10 + (snap.bytesTransferred / snap.totalBytes) * 80;
+                  setUploadProgress(pct);
+                },
+                (err) => {
+                  console.warn('[Audit] Storage signal failure:', err);
+                  reject(err);
+                },
+                async () => {
+                  currentPhotoURL = await getDownloadURL(uploadTask.snapshot.ref);
+                  resolve();
+                }
+              );
+            }),
+            new Promise((_, reject) => setTimeout(() => {
+              uploadTask.cancel();
+              reject(new Error('Network timeout (12s).'));
+            }, 12000))
+          ]);
+        } catch (storageErr) {
+          console.warn('[Audit] Applying Base64 failover strategy.');
+          currentPhotoURL = await generateThumbnail(selectedFile, 200, 0.4);
         }
       }
 
-      // 3. Prepare Firestore Updates
-      const updates: Partial<UserProfile> = {
-        name: formData.name.trim(),
-        username: finalUsername || "",
+      // 3. Database Integrity Write
+      const updates = {
+        name: formData.name.trim() || profile.name,
+        username: finalUsername,
         photoURL: currentPhotoURL,
-        role: formData.role as 'admin' | 'student'
+        role: formData.role
       };
 
-      console.log('Database Stage: Writing profile changes to Firestore...');
-      const userRef = doc(db, 'users', profile.uid);
-
-      // 4. Atomic Username Update Logic
       if (finalUsername !== profile.username) {
-        if (profile.username) {
-          console.log('Database Stage: Releasing old username:', profile.username);
-          const oldUsernameRef = doc(db, 'usernames', profile.username.toLowerCase());
-          await deleteDoc(oldUsernameRef);
-        }
-        
-        if (finalUsername) {
-          console.log('Database Stage: Claiming new username:', finalUsername);
-          const newUsernameId = finalUsername.toLowerCase();
-          const newUsernameRef = doc(db, 'usernames', newUsernameId);
-          await setDoc(newUsernameRef, { uid: profile.uid });
-        }
+        if (profile.username) await deleteDoc(doc(db, 'usernames', profile.username.toLowerCase()));
+        if (finalUsername) await setDoc(doc(db, 'usernames', finalUsername.toLowerCase()), { uid: profile.uid });
       }
-      
-      // 5. User Doc Update
-      await updateDoc(userRef, updates);
-      console.log('Database Stage: Success. Profile finalized.');
 
-      // 6. Finalize UI State
-      onUpdate(updates);
-      setSuccess('Your profile has been successfully updated!');
+      await updateDoc(doc(db, 'users', profile.uid), updates);
       
-      // Clear large state
+      onUpdate(updates);
+      setSuccess('Profile successfully updated.');
+      
       if (previewURL) {
         URL.revokeObjectURL(previewURL);
         setPreviewURL(null);
       }
       setSelectedFile(null);
+      setUploadProgress(null);
 
-      setTimeout(() => onClose(), 1500);
+      setTimeout(onClose, 1000);
     } catch (err: any) {
-      console.error('Profile Update Critical Failure:', err);
-      if (err.message && err.message.includes('Firestore Error')) {
-        setError('Security restriction: You lack permission to perform this update.');
-      } else {
-        setError(err.message || 'An unexpected error occurred. Please try again.');
-      }
+      console.error('[Audit] Transaction Failed:', err);
+      setError(err.message || 'The system could not save your changes. Try again.');
     } finally {
       setSaving(false);
-      console.log('--- Profile Update Flow Terminated ---');
     }
   };
 
@@ -265,7 +234,6 @@ export default function ProfileModal({ profile, onClose, onUpdate, isAdmin = fal
         </div>
 
         <form onSubmit={handleSubmit} className="p-8 space-y-6">
-          {/* Avatar Upload */}
           <div className="flex flex-col items-center gap-4">
             <div className="relative group">
               <div className="w-24 h-24 rounded-3xl bg-neutral-100 dark:bg-neutral-800 border-2 border-neutral-200 dark:border-neutral-700 overflow-hidden flex items-center justify-center transition-all group-hover:border-neutral-300 dark:group-hover:border-neutral-600">
@@ -394,11 +362,14 @@ export default function ProfileModal({ profile, onClose, onUpdate, isAdmin = fal
             className="w-full bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors disabled:opacity-50"
           >
             {saving ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                {uploadProgress !== null ? `Saving... ${Math.round(uploadProgress)}%` : 'Syncing...'}
+              </>
             ) : (
               <>
                 <Save className="w-5 h-5" />
-                Save Changes
+                Update Profile
               </>
             )}
           </button>

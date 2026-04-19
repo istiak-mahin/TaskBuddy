@@ -7,18 +7,21 @@ import firebaseConfig from '../firebase-applet-config.json';
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const storage = getStorage(app);
 
-// Test connection to Firestore on boot
-async function testConnection() {
+// Explicitly define the bucket URL for clarity
+const mainBucket = firebaseConfig.storageBucket || `${firebaseConfig.projectId}.appspot.com`;
+export const storage = getStorage(app, mainBucket);
+
+// Test connection to Firestore on boot to ensure config is correct
+async function verifyFirebaseSetup() {
   try {
-    // Attempting to fetch a non-existent doc from server to test connectivity
-    await getDocFromServer(doc(db, '_connection_test_', 'test'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Firestore Error: The client is offline. This usually indicates an incorrect Firebase configuration or that the database hasn't been provisioned yet.");
+    // Attempting to fetch a deep meta doc to verify DB connection
+    await getDocFromServer(doc(db, '_internal_', 'monitoring'));
+  } catch (error: any) {
+    if (error.code === 'unavailable' || error.message?.includes('offline')) {
+      console.warn("Firebase Warning: The app is starting in offline mode. If you are in a preview, ensure your internet and database are active.");
     }
   }
 }
 
-testConnection();
+verifyFirebaseSetup();
