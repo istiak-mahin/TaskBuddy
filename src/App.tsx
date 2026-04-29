@@ -424,71 +424,113 @@ export default function App() {
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 font-sans transition-colors duration-300">
       <nav className="bg-white/80 dark:bg-neutral-900/80 backdrop-blur-md border-b border-neutral-200 dark:border-neutral-800 sticky top-0 z-50 transition-colors duration-300">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-2 md:gap-8">
-            <div className="flex items-center gap-2 sm:gap-3">
+        <div className="max-w-7xl mx-auto px-2 sm:px-6 py-2 sm:py-0 sm:h-20 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div className="flex items-center justify-between gap-2 sm:justify-start sm:gap-8">
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
               <div className="w-8 h-8 sm:w-10 sm:h-10 bg-neutral-900 dark:bg-neutral-50 rounded-xl flex items-center justify-center shadow-lg transition-colors">
                 <GraduationCap className="w-5 h-5 sm:w-6 sm:h-6 text-white dark:text-neutral-900" />
               </div>
-              <span className="font-black text-lg sm:text-xl tracking-tighter hidden sm:inline text-neutral-900 dark:text-neutral-50">
+
+              <span className="font-black text-lg sm:text-xl tracking-tighter hidden md:inline text-neutral-900 dark:text-neutral-50">
                 TaskBuddy
               </span>
             </div>
 
-            {isAdmin && (
-              <div className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-800 p-1 rounded-2xl transition-colors">
-                <button
-                  onClick={() => setView('dashboard')}
-                  className={`px-3 md:px-6 py-2 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-widest transition-all ${
-                    view === 'dashboard'
-                      ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm'
-                      : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300'
-                  }`}
-                >
-                  <span className="hidden xs:inline">Dashboard</span>
-                  <span className="xs:hidden">Dash</span>
-                </button>
-                <button
-                  onClick={() => setView('admin')}
-                  className={`px-3 md:px-6 py-2 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-widest transition-all ${
-                    view === 'admin'
-                      ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm'
-                      : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300'
-                  }`}
-                >
-                  Admin
-                </button>
+            <div className="flex items-center gap-1.5 sm:hidden shrink-0">
+              <SectionSwitcher
+                profile={profile}
+                onSectionChange={(sectionId) =>
+                  setProfile((prev) => (prev ? { ...prev, activeSectionId: sectionId } : prev))
+                }
+              />
 
-                {isSuperAdmin && (
-                  <button
-                    onClick={() => setView('superadmin')}
-                    className={`px-3 md:px-6 py-2 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-widest transition-all ${
-                      view === 'superadmin'
-                        ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm'
-                        : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300'
-                    }`}
-                  >
-                    Super
-                  </button>
-                )}
-              </div>
-            )}
+              <ThemeToggle />
+
+              <button
+                onClick={() => setShowProfileModal(true)}
+                className="flex items-center group"
+              >
+                <div className="w-9 h-9 rounded-xl bg-neutral-100 dark:bg-neutral-800 border-2 border-transparent group-hover:border-neutral-900 dark:group-hover:border-neutral-50 transition-all overflow-hidden shadow-sm">
+                  {profile.photoURL ? (
+                    <img
+                      src={profile.photoURL}
+                      alt="Profile"
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <UserIcon className="w-5 h-5 text-neutral-400 dark:text-neutral-500" />
+                    </div>
+                  )}
+                </div>
+              </button>
+
+              <button
+                onClick={handleLogout}
+                className="w-9 h-9 flex items-center justify-center text-neutral-400 dark:text-neutral-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-all"
+                title="Sign Out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-4">
+          {isAdmin && (
+            <div className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-800 p-1 rounded-2xl transition-colors overflow-x-auto scrollbar-hide w-full sm:w-auto sm:flex-none">
+              <button
+                onClick={() => setView('dashboard')}
+                className={`flex-1 sm:flex-none px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 rounded-xl text-[9px] sm:text-[10px] md:text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap shrink-0 ${
+                  view === 'dashboard'
+                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm'
+                    : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300'
+                }`}
+              >
+                <span className="hidden sm:inline">Dashboard</span>
+                <span className="sm:hidden">Dash</span>
+              </button>
+
+              <button
+                onClick={() => setView('admin')}
+                className={`flex-1 sm:flex-none px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 rounded-xl text-[9px] sm:text-[10px] md:text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap shrink-0 ${
+                  view === 'admin'
+                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm'
+                    : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300'
+                }`}
+              >
+                Admin
+              </button>
+
+              {isSuperAdmin && (
+                <button
+                  onClick={() => setView('superadmin')}
+                  className={`flex-1 sm:flex-none px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 rounded-xl text-[9px] sm:text-[10px] md:text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap shrink-0 ${
+                    view === 'superadmin'
+                      ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300'
+                  }`}
+                >
+                  Super
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="hidden sm:flex items-center gap-3 shrink-0">
             <SectionSwitcher
               profile={profile}
               onSectionChange={(sectionId) =>
                 setProfile((prev) => (prev ? { ...prev, activeSectionId: sectionId } : prev))
               }
             />
+
             <ThemeToggle />
 
             <button
               onClick={() => setShowProfileModal(true)}
-              className="flex items-center gap-2 sm:gap-4 group"
+              className="flex items-center gap-4 group"
             >
-              <div className="text-right hidden md:block">
+              <div className="text-right hidden lg:block">
                 <p className="text-sm font-black leading-none group-hover:text-neutral-600 dark:group-hover:text-neutral-300 dark:text-neutral-100 transition-colors uppercase tracking-tight">
                   {profile.username || profile.name}
                 </p>
@@ -496,7 +538,8 @@ export default function App() {
                   {profile.role}
                 </p>
               </div>
-              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-neutral-100 dark:bg-neutral-800 border-2 border-transparent group-hover:border-neutral-900 dark:group-hover:border-neutral-50 transition-all overflow-hidden shadow-sm">
+
+              <div className="w-11 h-11 rounded-2xl bg-neutral-100 dark:bg-neutral-800 border-2 border-transparent group-hover:border-neutral-900 dark:group-hover:border-neutral-50 transition-all overflow-hidden shadow-sm">
                 {profile.photoURL ? (
                   <img
                     src={profile.photoURL}
@@ -506,7 +549,7 @@ export default function App() {
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
-                    <UserIcon className="w-5 h-5 sm:w-6 sm:h-6 text-neutral-400 dark:text-neutral-500" />
+                    <UserIcon className="w-6 h-6 text-neutral-400 dark:text-neutral-500" />
                   </div>
                 )}
               </div>
@@ -514,14 +557,15 @@ export default function App() {
 
             <button
               onClick={handleLogout}
-              className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center text-neutral-400 dark:text-neutral-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-all"
+              className="w-10 h-10 flex items-center justify-center text-neutral-400 dark:text-neutral-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-all"
               title="Sign Out"
             >
-              <LogOut className="w-4 h-4 sm:w-5 sm:h-5" />
+              <LogOut className="w-5 h-5" />
             </button>
           </div>
         </div>
       </nav>
+
 
       <AnimatePresence>
         {showProfileModal && profile && (
@@ -536,7 +580,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <main className="max-w-7xl mx-auto px-6 py-12">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-12">
         <AnimatePresence mode="wait">
           {!isSuperAdmin && !hasAssignedSection ? (
             <motion.div

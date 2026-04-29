@@ -33,7 +33,7 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
   const [sectionForm, setSectionForm] = useState<SectionForm>(emptySectionForm);
   const [editForm, setEditForm] = useState<SectionForm>(emptySectionForm);
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
-  const [assignForm, setAssignForm] = useState({ email: '', sectionId: '', role: 'student' as UserRole });
+  const [assignForm, setAssignForm] = useState({ email: '', sectionName: '', department: '', role: 'student' as UserRole });
   const [searchQuery, setSearchQuery] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -41,6 +41,8 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
   const [saving, setSaving] = useState(false);
 
   const normalizeJoinCode = (value: string) => value.trim().toUpperCase().replace(/\s+/g, '');
+  const getDepartmentLabel = (section?: Pick<Section, 'department'> | null) =>
+    section?.department?.trim() || 'No Department';
 
   const loadData = async () => {
     setLoadingData(true);
@@ -58,8 +60,12 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
       setSections(sectionData);
       setUsers(userData);
 
-      if (!assignForm.sectionId && sectionData[0]?.id) {
-        setAssignForm((prev) => ({ ...prev, sectionId: sectionData[0].id! }));
+      if (!assignForm.sectionName && sectionData[0]) {
+        setAssignForm((prev) => ({
+          ...prev,
+          sectionName: sectionData[0].name || '',
+          department: getDepartmentLabel(sectionData[0]),
+        }));
       }
     } catch (err: any) {
       console.error('Super admin load failed:', err);
@@ -84,6 +90,36 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
         .some((value) => String(value).toLowerCase().includes(queryText))
     );
   }, [users, searchQuery]);
+
+  const sectionNames = useMemo(() => {
+    return Array.from(
+      new Set(sections.map((section) => section.name).filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b));
+  }, [sections]);
+
+  const departmentsForSelectedSection = useMemo(() => {
+    if (!assignForm.sectionName) return [];
+
+    return Array.from(
+      new Set(
+        sections
+          .filter((section) => section.name === assignForm.sectionName)
+          .map((section) => getDepartmentLabel(section))
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [sections, assignForm.sectionName]);
+
+  const selectedAssignSection = useMemo(() => {
+    if (!assignForm.sectionName || !assignForm.department) return null;
+
+    return (
+      sections.find(
+        (section) =>
+          section.name === assignForm.sectionName &&
+          getDepartmentLabel(section) === assignForm.department
+      ) || null
+    );
+  }, [sections, assignForm.sectionName, assignForm.department]);
 
   const createJoinCodePayload = (code: string, sectionId: string, sectionName: string) => ({
     code,
@@ -284,8 +320,13 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
           };
         })
       );
-      if (assignForm.sectionId === sectionId) {
-        setAssignForm((prev) => ({ ...prev, sectionId: '' }));
+      if (selectedAssignSection?.id === sectionId) {
+        const nextSection = sections.find((item) => item.id !== sectionId);
+        setAssignForm((prev) => ({
+          ...prev,
+          sectionName: nextSection?.name || '',
+          department: nextSection ? getDepartmentLabel(nextSection) : '',
+        }));
       }
       setMessage('Section deleted successfully.');
     } catch (err: any) {
@@ -307,10 +348,15 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
     try {
       const email = assignForm.email.trim().toLowerCase();
       const target = users.find((user) => (user.email || '').toLowerCase() === email);
-      const section = sections.find((item) => item.id === assignForm.sectionId);
+      const section = selectedAssignSection;
 
-      if (!target || !section?.id) {
-        setMessage('User or section not found. Ask the user to login once first.');
+      if (!target) {
+        setMessage('User not found. Ask the user to login once first.');
+        return;
+      }
+
+      if (!section?.id) {
+        setMessage('Please select both section and department.');
         return;
       }
 
@@ -374,7 +420,7 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
       );
 
       setAssignForm((prev) => ({ ...prev, email: '' }));
-      setMessage(`${target.email || email} assigned to ${section.name}.`);
+      setMessage(`${target.email || email} assigned to ${section.name} (${getDepartmentLabel(section)}).`);
     } catch (err: any) {
       console.error('Assign user failed:', err);
       setError(err?.message || 'Could not assign user.');
@@ -433,12 +479,54 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
             <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">Assign User</h3>
           </div>
           <form onSubmit={handleAssignUser} className="space-y-4">
-            <input value={assignForm.email} onChange={(event) => setAssignForm((prev) => ({ ...prev, email: event.target.value }))} placeholder="student@email.com" className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none focus:ring-2 focus:ring-neutral-900/5 transition-all" />
-            <select value={assignForm.sectionId} onChange={(event) => setAssignForm((prev) => ({ ...prev, sectionId: event.target.value }))} className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none">
+            <input
+              value={assignForm.email}
+              onChange={(event) => setAssignForm((prev) => ({ ...prev, email: event.target.value }))}
+              placeholder="student@email.com"
+              className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none focus:ring-2 focus:ring-neutral-900/5 transition-all"
+            />
+
+            <select
+              value={assignForm.sectionName}
+              onChange={(event) => {
+                const nextSectionName = event.target.value;
+                const firstMatchingSection = sections.find((section) => section.name === nextSectionName);
+
+                setAssignForm((prev) => ({
+                  ...prev,
+                  sectionName: nextSectionName,
+                  department: firstMatchingSection ? getDepartmentLabel(firstMatchingSection) : '',
+                }));
+              }}
+              className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none"
+            >
               <option value="">Select Section</option>
-              {sections.map((section) => <option key={section.id} value={section.id}>{section.name}</option>)}
+              {sectionNames.map((sectionName) => (
+                <option key={sectionName} value={sectionName}>
+                  {sectionName}
+                </option>
+              ))}
             </select>
-            <select value={assignForm.role} onChange={(event) => setAssignForm((prev) => ({ ...prev, role: event.target.value as UserRole }))} className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none">
+
+            <select
+              value={assignForm.department}
+              onChange={(event) => setAssignForm((prev) => ({ ...prev, department: event.target.value }))}
+              disabled={!assignForm.sectionName}
+              className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none disabled:opacity-60"
+            >
+              <option value="">Select Department</option>
+              {departmentsForSelectedSection.map((department) => (
+                <option key={department} value={department}>
+                  {department}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={assignForm.role}
+              onChange={(event) => setAssignForm((prev) => ({ ...prev, role: event.target.value as UserRole }))}
+              className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none"
+            >
               <option value="student">Student</option>
               <option value="sectionAdmin">Section Admin</option>
             </select>
