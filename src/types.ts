@@ -1,4 +1,4 @@
-export type UserRole = 'student' | 'admin';
+export type UserRole = 'student' | 'admin' | 'sectionAdmin' | 'superAdmin';
 
 export interface UserProfile {
   uid: string;
@@ -6,9 +6,24 @@ export interface UserProfile {
   username?: string; // Unique handle starting with @
   email: string;
   role: UserRole;
+  sectionIds?: string[];
+  activeSectionId?: string;
   createdAt: string;
   photoURL?: string;
   disabled?: boolean;
+  joinCodeUsed?: string;
+}
+
+export interface Section {
+  id?: string;
+  name: string;
+  department?: string;
+  semester?: string;
+  batch?: string;
+  joinCode?: string;
+  adminIds: string[];
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export interface Assignment {
@@ -20,6 +35,7 @@ export interface Assignment {
   total_hours: number;
   completed_hours: number;
   urgency?: 'low' | 'medium' | 'urgent' | 'overdue' | 'done';
+  sectionId?: string;
   createdAt?: any;
   type: 'Quiz' | 'Assignment' | 'Presentation' | 'Lab';
   syllabus?: string;
@@ -29,6 +45,7 @@ export interface Course {
   id?: string;
   name: string;
   createdBy: string;
+  sectionId?: string;
 }
 
 export interface Announcement {
@@ -37,6 +54,7 @@ export interface Announcement {
   content: string;
   createdAt: string;
   createdBy: string;
+  sectionId?: string;
   priority?: 'normal' | 'important';
 }
 
@@ -49,6 +67,7 @@ export interface AppNotification {
   read: boolean;
   createdAt: string;
   assignmentId?: string;
+  sectionId?: string;
 }
 
 export enum OperationType {

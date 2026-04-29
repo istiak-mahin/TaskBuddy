@@ -11,6 +11,9 @@ import { doc, getDoc, setDoc, serverTimestamp, getDocFromServer } from 'firebase
 import { UserProfile, OperationType, FirestoreErrorInfo } from './types';
 import StudentDashboard from './components/StudentDashboard';
 import AdminDashboard from './components/AdminDashboard';
+import SuperAdminPanel from './components/SuperAdminPanel';
+import JoinSection from './components/JoinSection';
+import SectionSwitcher from './components/SectionSwitcher';
 import ProfileModal from './components/ProfileModal';
 import ThemeToggle from './components/ThemeToggle';
 import {
@@ -23,6 +26,7 @@ import {
   ShieldCheck,
   Zap,
 } from 'lucide-react';
+import { isSuperAdminEmail } from './services/sectionService';
 import { motion, AnimatePresence } from 'motion/react';
 
 function handleFirestoreError(
@@ -56,7 +60,7 @@ function handleFirestoreError(
 
 const Splash = ({ onComplete }: { onComplete: () => void }) => {
   useEffect(() => {
-    const timer = setTimeout(onComplete, 2500);
+    const timer = setTimeout(onComplete, 900);
     return () => clearTimeout(timer);
   }, [onComplete]);
 
@@ -108,93 +112,151 @@ export default function App() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [view, setView] = useState<'dashboard' | 'admin'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'admin' | 'superadmin'>('dashboard');
 
   useEffect(() => {
     let isMounted = true;
 
+    const buildSafeProfile = (firebaseUser: User, existing?: Partial<UserProfile>): UserProfile => {
+      const email = firebaseUser.email || existing?.email || '';
+      const role = isSuperAdminEmail(email)
+        ? 'superAdmin'
+        : existing?.role === 'admin'
+          ? 'sectionAdmin'
+          : existing?.role === 'sectionAdmin'
+            ? 'sectionAdmin'
+            : 'student';
+
+      const sectionIds = existing?.sectionIds || [];
+
+      return {
+        uid: firebaseUser.uid,
+        name: existing?.name || firebaseUser.displayName || 'Anonymous',
+        username: existing?.username,
+        email,
+        role: role as UserProfile['role'],
+        sectionIds,
+        activeSectionId: existing?.activeSectionId || sectionIds[0] || '',
+        photoURL: existing?.photoURL || firebaseUser.photoURL || undefined,
+        disabled: existing?.disabled,
+        createdAt: existing?.createdAt || new Date().toISOString(),
+      };
+    };
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!isMounted) return;
 
-      if (firebaseUser) {
-        setLoading(true);
-        setError(null);
-        setUser(firebaseUser);
-
-        const userDocRef = doc(db, 'users', firebaseUser.uid);
-
-        try {
-          let userDoc;
-          try {
-            userDoc = await getDocFromServer(userDocRef);
-          } catch (e) {
-            userDoc = await getDoc(userDocRef);
-          }
-
-          if (userDoc.exists()) {
-            const userData = userDoc.data() as UserProfile;
-
-            if (userData.username) {
-              const usernameId = userData.username.toLowerCase();
-              const usernameRef = doc(db, 'usernames', usernameId);
-              try {
-                const uDoc = await getDoc(usernameRef);
-                if (!uDoc.exists()) {
-                  await setDoc(usernameRef, { uid: firebaseUser.uid });
-                }
-              } catch (e) {
-                console.warn('Could not claim username mapping:', e);
-              }
-            }
-
-            if (userData.disabled) {
-              setError('Your account has been disabled. Please contact the administrator.');
-              await signOut(auth);
-              if (isMounted) {
-                setUser(null);
-                setProfile(null);
-              }
-            } else {
-              if (isMounted) {
-                setProfile(userData);
-              }
-            }
-          } else {
-            const isAdminEmail =
-              firebaseUser.email === 'carlesirodriguez7@gmail.com';
-
-            const newProfile: UserProfile = {
-              uid: firebaseUser.uid,
-              name: firebaseUser.displayName || 'Anonymous',
-              email: firebaseUser.email || '',
-              role: isAdminEmail ? 'admin' : 'student',
-              createdAt: new Date().toISOString(),
-            };
-
-            await setDoc(userDocRef, {
-              ...newProfile,
-              createdAt: serverTimestamp(),
-            });
-
-            if (isMounted) {
-              setProfile(newProfile);
-            }
-          }
-        } catch (error) {
-          console.error('Error fetching user profile:', error);
-          if (isMounted) {
-            setError('Failed to load user profile. Please check your connection.');
-          }
-          handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
-        } finally {
-          if (isMounted) {
-            setLoading(false);
-          }
-        }
-      } else {
+      if (!firebaseUser) {
         setUser(null);
         setProfile(null);
         setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+      setUser(firebaseUser);
+
+      const userDocRef = doc(db, 'users', firebaseUser.uid);
+
+      try {
+        let userDoc;
+        try {
+          userDoc = await getDocFromServer(userDocRef);
+        } catch (serverReadError) {
+          console.warn('Server profile read failed, using cache if available:', serverReadError);
+          userDoc = await getDoc(userDocRef);
+        }
+
+        if (userDoc.exists()) {
+          const userData = userDoc.data() as UserProfile;
+
+          if (userData.disabled) {
+            setError('Your account has been disabled. Please contact the administrator.');
+            await signOut(auth);
+            if (isMounted) {
+              setUser(null);
+              setProfile(null);
+            }
+            return;
+          }
+
+          const safeProfile = buildSafeProfile(firebaseUser, userData);
+
+          if (userData.username) {
+            const usernameId = userData.username.toLowerCase();
+            const usernameRef = doc(db, 'usernames', usernameId);
+            try {
+              const uDoc = await getDoc(usernameRef);
+              if (!uDoc.exists()) {
+                await setDoc(usernameRef, { uid: firebaseUser.uid });
+              }
+            } catch (usernameError) {
+              console.warn('Could not claim username mapping:', usernameError);
+            }
+          }
+
+          try {
+            const needsSync =
+              safeProfile.uid !== userData.uid ||
+              safeProfile.name !== userData.name ||
+              safeProfile.email !== userData.email ||
+              safeProfile.role !== userData.role ||
+              JSON.stringify(safeProfile.sectionIds || []) !== JSON.stringify(userData.sectionIds || []) ||
+              safeProfile.activeSectionId !== userData.activeSectionId;
+
+            if (needsSync) {
+              await setDoc(
+                userDocRef,
+                {
+                  uid: safeProfile.uid,
+                  name: safeProfile.name,
+                  email: safeProfile.email,
+                  username: safeProfile.username || '',
+                  role: safeProfile.role,
+                  sectionIds: safeProfile.sectionIds || [],
+                  activeSectionId: safeProfile.activeSectionId || '',
+                  photoURL: safeProfile.photoURL || '',
+                  disabled: safeProfile.disabled || false,
+                  updatedAt: serverTimestamp(),
+                },
+                { merge: true }
+              );
+            }
+          } catch (syncError) {
+            console.warn('Profile sync skipped. Login will continue:', syncError);
+          }
+
+          if (isMounted) {
+            setProfile(safeProfile);
+          }
+        } else {
+          const newProfile = buildSafeProfile(firebaseUser);
+
+          try {
+            await setDoc(userDocRef, {
+              ...newProfile,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          } catch (createError) {
+            console.warn('User profile create failed. Continuing with local profile:', createError);
+          }
+
+          if (isMounted) {
+            setProfile(newProfile);
+          }
+        }
+      } catch (profileError) {
+        console.error('Profile load failed. Continuing with safe local profile:', profileError);
+        if (isMounted) {
+          setProfile(buildSafeProfile(firebaseUser));
+          setError(null);
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     });
 
@@ -354,8 +416,10 @@ export default function App() {
     );
   }
 
+  const isSuperAdmin = isSuperAdminEmail(profile.email);
   const isAdmin =
-    profile.role === 'admin' || profile.email === 'carlesirodriguez7@gmail.com';
+    isSuperAdmin || profile.role === 'admin' || profile.role === 'sectionAdmin';
+  const hasAssignedSection = !!(profile.activeSectionId || profile.sectionIds?.length);
 
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 font-sans transition-colors duration-300">
@@ -394,11 +458,30 @@ export default function App() {
                 >
                   Admin
                 </button>
+
+                {isSuperAdmin && (
+                  <button
+                    onClick={() => setView('superadmin')}
+                    className={`px-3 md:px-6 py-2 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-widest transition-all ${
+                      view === 'superadmin'
+                        ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm'
+                        : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300'
+                    }`}
+                  >
+                    Super
+                  </button>
+                )}
               </div>
             )}
           </div>
 
           <div className="flex items-center gap-2 sm:gap-4">
+            <SectionSwitcher
+              profile={profile}
+              onSectionChange={(sectionId) =>
+                setProfile((prev) => (prev ? { ...prev, activeSectionId: sectionId } : prev))
+              }
+            />
             <ThemeToggle />
 
             <button
@@ -455,7 +538,41 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-6 py-12">
         <AnimatePresence mode="wait">
-          {view === 'admin' && isAdmin ? (
+          {!isSuperAdmin && !hasAssignedSection ? (
+            <motion.div
+              key="join-section"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <JoinSection
+                profile={profile}
+                onJoined={(sectionId) =>
+                  setProfile((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          role: prev.role === 'sectionAdmin' ? 'sectionAdmin' : 'student',
+                          activeSectionId: sectionId,
+                          sectionIds: Array.from(new Set([...(prev.sectionIds || []), sectionId])),
+                        }
+                      : prev
+                  )
+                }
+              />
+            </motion.div>
+          ) : view === 'superadmin' && isSuperAdmin ? (
+            <motion.div
+              key="superadmin"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <SuperAdminPanel profile={profile} />
+            </motion.div>
+          ) : view === 'admin' && isAdmin ? (
             <motion.div
               key="admin"
               initial={{ opacity: 0, y: 20 }}
@@ -463,7 +580,7 @@ export default function App() {
               exit={{ opacity: 0, y: -20 }}
               transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
             >
-              <AdminDashboard profile={profile} />
+              <AdminDashboard profile={profile} isSuperAdmin={isSuperAdmin} />
             </motion.div>
           ) : (
             <motion.div

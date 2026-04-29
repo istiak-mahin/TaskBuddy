@@ -2,53 +2,6 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: users
-    // Document ID: {uid}
-    // Fields:
-    //   - uid: string (required)
-    //   - name: string (required)
-    //   - username: string (optional, starts with @)
-    //   - email: string (required)
-    //   - role: string (required, ['student', 'admin'])
-    //   - createdAt: timestamp (optional)
-    //   - photoURL: string (optional)
-    //
-    // Collection: assignments
-    // Document ID: {assignmentId}
-    // Fields:
-    //   - title: string (required)
-    //   - course: string (required)
-    //   - deadline: string (required, ISO 8601)
-    //   - userId: string (required, student UID)
-    //   - type: string (required, ['Quiz', 'Assignment', 'Presentation'])
-    //   - completed_hours: number (required)
-    //   - total_hours: number (required)
-    //   - urgency: string (required)
-    //
-    // Collection: announcements
-    // Document ID: {announcementId}
-    // Fields:
-    //   - title: string (required)
-    //   - content: string (required)
-    //   - priority: string (required, ['normal', 'important'])
-    //   - createdAt: string (required)
-    //   - createdBy: string (required)
-    //
-    // Collection: courses
-    // Document ID: {courseId}
-    // Fields:
-    //   - name: string (required)
-    //   - createdBy: string (required)
-    //
-    // ===============================================================
-
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
 
     function isAuthenticated() {
       return request.auth != null;
@@ -58,11 +11,57 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function isSuperAdminEmail() {
+      return isAuthenticated()
+        && request.auth.token.email == "carlesirodriguez7@gmail.com";
+    }
+
+    function hasUserDoc() {
+      return isAuthenticated()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function currentUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function currentRole() {
+      return hasUserDoc()
+        ? currentUser().data.get('role', 'student')
+        : 'student';
+    }
+
+    function currentSectionIds() {
+      return hasUserDoc() && currentUser().data.get('sectionIds', []) is list
+        ? currentUser().data.get('sectionIds', [])
+        : [];
+    }
+
     function isAdmin() {
       return isAuthenticated() && (
-        request.auth.token.email == "carlesirodriguez7@gmail.com" ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'student') == 'admin')
+        isSuperAdminEmail() ||
+        (
+          hasUserDoc() &&
+          currentRole() in ['admin', 'superAdmin']
+        )
+      );
+    }
+
+    function isSectionAdmin(sectionId) {
+      return isAuthenticated() && (
+        isAdmin() ||
+        (
+          hasUserDoc() &&
+          currentRole() in ['sectionAdmin', 'admin', 'superAdmin'] &&
+          sectionId in currentSectionIds()
+        )
+      );
+    }
+
+    function isSectionMember(sectionId) {
+      return isAuthenticated() && (
+        isAdmin() ||
+        sectionId in currentSectionIds()
       );
     }
 
@@ -75,21 +74,16 @@ service cloud.firestore {
       return request.resource.data.keys().hasAll(fields);
     }
 
-    function hasOnlyAllowedFields(fields) {
-      return request.resource.data.keys().hasOnly(fields);
-    }
-
     function isValidEmail(email) {
-      return email is string && email.matches("(?i)^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$") && email.size() < 256;
+      return email is string &&
+             email.matches("(?i)^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$") &&
+             email.size() < 256;
     }
 
     function isValidUsername(username) {
-      return username is string && username.matches("^@.*") && username.size() >= 4 && username.size() <= 30;
+      return username is string &&
+             username.matches("^[a-zA-Z0-9_]{3,30}$");
     }
-
-    // ===============================================================
-    // Domain Validators
-    // ===============================================================
 
     function isValidUser(data) {
       let uid = data.get('uid', '');
@@ -99,15 +93,20 @@ service cloud.firestore {
       let username = data.get('username', '');
       let photoURL = data.get('photoURL', '');
       let disabled = data.get('disabled', false);
+      let sectionIds = data.get('sectionIds', []);
+      let activeSectionId = data.get('activeSectionId', '');
 
-      return uid is string && uid.size() > 0 && uid.size() < 128 &&
+      return uid is string && uid.size() >= 0 && uid.size() < 128 &&
              name is string && name.size() > 0 && name.size() < 128 &&
              (email == '' || isValidEmail(email)) &&
-             role in ['student', 'admin'] &&
+             role in ['student', 'admin', 'sectionAdmin', 'superAdmin'] &&
              (username == '' || isValidUsername(username)) &&
              (photoURL == '' || (photoURL is string && photoURL.size() < 1000000)) &&
              disabled is bool &&
-             (!('createdAt' in data) || data.createdAt is timestamp || isValidDateString(data.createdAt));
+             sectionIds is list &&
+             activeSectionId is string &&
+             (!('createdAt' in data) || data.createdAt is timestamp || isValidDateString(data.createdAt)) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp || isValidDateString(data.updatedAt));
     }
 
     function isValidAssignment(data) {
@@ -121,6 +120,7 @@ service cloud.firestore {
              (!('total_hours' in data) || data.total_hours is number) &&
              (!('urgency' in data) || data.urgency is string) &&
              (!('createdBy' in data) || data.createdBy is string) &&
+             (!('sectionId' in data) || data.sectionId is string) &&
              (!('syllabus' in data) || (data.syllabus is string && data.syllabus.size() < 2000)) &&
              (!('createdAt' in data) || data.createdAt is timestamp || isValidDateString(data.createdAt));
     }
@@ -131,67 +131,113 @@ service cloud.firestore {
              data.content is string && data.content.size() > 0 && data.content.size() < 5000 &&
              data.priority in ['normal', 'important'] &&
              (isValidDateString(data.createdAt) || data.createdAt is timestamp) &&
-             data.createdBy is string;
+             data.createdBy is string &&
+             (!('sectionId' in data) || data.sectionId is string);
     }
 
     function isValidCourse(data) {
       return hasRequiredFields(['name', 'createdBy']) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.createdBy is string;
+             data.createdBy is string &&
+             (!('sectionId' in data) || data.sectionId is string);
     }
 
-    // ===============================================================
-    // Rules
-    // ===============================================================
+    function isValidSection(data) {
+      return data.name is string &&
+             data.name.size() > 0 &&
+             data.name.size() < 100 &&
+             (!('department' in data) || data.department is string) &&
+             (!('semester' in data) || data.semester is string) &&
+             (!('batch' in data) || data.batch is string) &&
+             (!('joinCode' in data) || data.joinCode is string) &&
+             (!('adminIds' in data) || data.adminIds is list) &&
+             (!('createdAt' in data) || data.createdAt is timestamp || isValidDateString(data.createdAt)) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp || isValidDateString(data.updatedAt));
+    }
+
+    function isSafeOwnerUserUpdate(userId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+
+      return isOwner(userId) &&
+             changed.hasOnly([
+               'uid',
+               'name',
+               'username',
+               'email',
+               'photoURL',
+               'role',
+               'sectionIds',
+               'activeSectionId',
+               'disabled',
+               'joinCodeUsed',
+               'createdAt',
+               'updatedAt'
+             ]) &&
+             request.resource.data.get('uid', request.auth.uid) == request.auth.uid &&
+             (
+               request.resource.data.get('email', request.auth.token.email) == request.auth.token.email ||
+               request.resource.data.get('email', '') == resource.data.get('email', '')
+             ) &&
+             request.resource.data.get('role', resource.data.get('role', 'student')) == resource.data.get('role', 'student') &&
+             request.resource.data.get('disabled', resource.data.get('disabled', false)) == resource.data.get('disabled', false) &&
+             request.resource.data.get('sectionIds', []) is list &&
+             request.resource.data.get('activeSectionId', '') is string;
+    }
+
+    function isValidJoinCode(data) {
+      return data.code is string &&
+             data.code.size() > 0 &&
+             data.code.size() <= 40 &&
+             data.sectionId is string &&
+             data.sectionId.size() > 0 &&
+             data.sectionName is string &&
+             data.sectionName.size() > 0 &&
+             data.active is bool &&
+             (!('createdBy' in data) || data.createdBy is string) &&
+             (!('createdAt' in data) || data.createdAt is timestamp || isValidDateString(data.createdAt)) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp || isValidDateString(data.updatedAt));
+    }
 
     match /users/{userId} {
       allow get: if isOwner(userId) || isAdmin();
       allow list: if isAdmin();
-      
-      allow create: if isAuthenticated() && 
-                      isValidUser(request.resource.data) && 
-                      (isAdmin() || (isOwner(userId) && request.resource.data.get('role', 'student') == 'student'));
-      
-      allow update: if isAuthenticated() && (
-                      isAdmin() || (
-                        isOwner(userId) && 
-                        // Lock sensitive fields for non-admins
-                        !request.resource.data.diff(resource.data).affectedKeys()
-                          .hasAny(['uid', 'email', 'disabled']) &&
-                        // Ensure role hasn't changed
-                        request.resource.data.get('role', 'student') == resource.data.get('role', 'student') &&
-                        isValidUser(request.resource.data)
+
+      allow create: if isAuthenticated()
+                    && isValidUser(request.resource.data)
+                    && (
+                      isAdmin() ||
+                      (
+                        isOwner(userId) &&
+                        request.resource.data.uid == request.auth.uid &&
+                        request.resource.data.get('role', 'student') == 'student'
                       )
                     );
+
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        isSafeOwnerUserUpdate(userId)
+      );
+
+      allow delete: if isAdmin();
     }
 
     match /usernames/{username} {
-      // Allow anyone to check if a username exists
       allow get: if isAuthenticated();
-      
-      // Create: If the username doesn't exist AND the user is mapping it to their own UID
-      allow create: if isAuthenticated() && 
-                      request.resource.data.uid == request.auth.uid &&
-                      username.matches("^@.*") && username.size() >= 4;
-      
-      // Update: Not allowed (should delete and recreate)
+
+      allow create: if isAuthenticated()
+                    && request.resource.data.uid == request.auth.uid
+                    && username.matches("^[a-zA-Z0-9_]{3,30}$");
+
       allow update: if false;
-      
-      // Delete: Only owner can delete their username mapping
-      allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
+
+      allow delete: if isAuthenticated()
+                    && resource.data.uid == request.auth.uid;
     }
 
     match /assignments/{assignmentId} {
-      // All authenticated users can read assignments (as requested: "all user can only see that")
       allow read: if isAuthenticated();
-      
-      // Only admins can create assignments
       allow create: if isAdmin() && isValidAssignment(request.resource.data);
-      
-      // Only admins can update assignments (as requested: "all user can only see that")
       allow update: if isAdmin() && isValidAssignment(request.resource.data);
-      
-      // Only admins can delete assignments
       allow delete: if isAdmin();
     }
 
@@ -210,14 +256,87 @@ service cloud.firestore {
     }
 
     match /notifications/{notificationId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isAuthenticated()
+                  && (
+                    resource.data.userId == request.auth.uid ||
+                    isAdmin()
+                  );
+
       allow create: if isAdmin();
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && 
-                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
-      allow delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+
+      allow update: if isAuthenticated()
+                    && resource.data.userId == request.auth.uid
+                    && request.resource.data.diff(resource.data)
+                      .affectedKeys()
+                      .hasOnly(['read']);
+
+      allow delete: if isAdmin()
+                    || (
+                      isAuthenticated() &&
+                      resource.data.userId == request.auth.uid
+                    );
     }
 
-    // Default deny
+    match /joinCodes/{code} {
+      allow get: if isAuthenticated();
+      allow list: if isAdmin();
+      allow create: if isAdmin() && isValidJoinCode(request.resource.data);
+      allow update: if isAdmin() && isValidJoinCode(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /sections/{sectionId} {
+      allow get: if isAuthenticated() && (isAdmin() || isSectionMember(sectionId));
+      allow list: if isAdmin();
+      allow create: if isAdmin() && isValidSection(request.resource.data);
+      allow update: if isAdmin() && isValidSection(request.resource.data);
+      allow delete: if isAdmin();
+
+      match /students/{studentId} {
+        allow read: if isSectionMember(sectionId);
+
+        allow create: if isSectionAdmin(sectionId)
+                      || (
+                        isAuthenticated() &&
+                        request.auth.uid == studentId
+                      );
+
+        allow update: if isSectionAdmin(sectionId)
+                      || (
+                        isAuthenticated() &&
+                        request.auth.uid == studentId
+                      );
+
+        allow delete: if isSectionAdmin(sectionId) || isAdmin();
+      }
+
+      match /assignments/{assignmentId} {
+        allow read: if isSectionMember(sectionId);
+        allow create: if isSectionAdmin(sectionId) && isValidAssignment(request.resource.data);
+        allow update: if isSectionAdmin(sectionId) && isValidAssignment(request.resource.data);
+        allow delete: if isSectionAdmin(sectionId);
+      }
+
+      match /announcements/{announcementId} {
+        allow read: if isSectionMember(sectionId);
+        allow create: if isSectionAdmin(sectionId) && isValidAnnouncement(request.resource.data);
+        allow update: if isSectionAdmin(sectionId) && isValidAnnouncement(request.resource.data);
+        allow delete: if isSectionAdmin(sectionId);
+      }
+
+      match /courses/{courseId} {
+        allow read: if isSectionMember(sectionId);
+        allow create: if isSectionAdmin(sectionId) && isValidCourse(request.resource.data);
+        allow update: if isSectionAdmin(sectionId) && isValidCourse(request.resource.data);
+        allow delete: if isSectionAdmin(sectionId);
+      }
+
+      match /notifications/{notificationId} {
+        allow read: if isSectionMember(sectionId);
+        allow create, update, delete: if isSectionAdmin(sectionId);
+      }
+    }
+
     match /{path=**} {
       allow read, write: if false;
     }

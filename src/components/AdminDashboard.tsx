@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { auth, db } from '../firebase';
 import { collection, query, onSnapshot, addDoc, deleteDoc, doc, updateDoc, serverTimestamp, getDocs } from 'firebase/firestore';
 import { UserProfile, Course, Announcement, Assignment } from '../types';
+import { getActiveSectionId, getSectionCollection, getSectionDoc } from '../services/sectionService';
 import { Plus, Trash2, Users, Megaphone, BookOpen, LayoutGrid, X, Loader2, Settings2, Edit2, Check, AlertCircle, UserCircle2, CheckCircle2, Clock, ArrowLeft, Search, History, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import StudentDashboard from './StudentDashboard';
@@ -10,6 +11,7 @@ import React from 'react';
 
 interface AdminDashboardProps {
   profile: UserProfile;
+  isSuperAdmin?: boolean;
 }
 
 enum OperationType {
@@ -114,7 +116,7 @@ function CountdownTimer({ deadline, isDone }: { deadline: string, isDone?: boole
   );
 }
 
-export default function AdminDashboard({ profile }: AdminDashboardProps) {
+export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminDashboardProps) {
   const [courses, setCourses] = useState<Course[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -140,6 +142,7 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
 
   const [editingStudentProfile, setEditingStudentProfile] = useState<UserProfile | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const activeSectionId = getActiveSectionId(profile);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [docToDelete, setDocToDelete] = useState<{ col: string; id: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -163,12 +166,12 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
     try {
       const studentAssignments = allAssignments.filter(a => a.userId === studentId);
       const promises = studentAssignments.map(a => {
-        const ref = doc(db, 'assignments', a.id!);
+        const ref = getSectionDoc(profile, 'assignments', a.id!);
         return updateDoc(ref, { completed_hours: 0, urgency: 'low' });
       });
       await Promise.all(promises);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'assignments');
+      handleFirestoreError(error, OperationType.UPDATE, `sections/${activeSectionId}/assignments`);
     } finally {
       setIsProcessing(null);
     }
@@ -201,19 +204,20 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
 
   useEffect(() => {
     setLoading(true);
-    const unsubCourses = onSnapshot(collection(db, 'courses'), (snapshot) => {
+    const unsubCourses = onSnapshot(getSectionCollection(profile, 'courses'), (snapshot) => {
       setCourses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Course)));
     });
 
-    const unsubAnnouncements = onSnapshot(collection(db, 'announcements'), (snapshot) => {
+    const unsubAnnouncements = onSnapshot(getSectionCollection(profile, 'announcements'), (snapshot) => {
       setAnnouncements(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Announcement)));
     });
 
     const unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
-      setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as unknown as UserProfile)));
+      const allUsers = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as unknown as UserProfile));
+      setUsers(isSuperAdmin ? allUsers : allUsers.filter(user => user.sectionIds?.includes(activeSectionId) || user.uid === profile.uid));
     });
 
-    const unsubAssignments = onSnapshot(collection(db, 'assignments'), (snapshot) => {
+    const unsubAssignments = onSnapshot(getSectionCollection(profile, 'assignments'), (snapshot) => {
       setAllAssignments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Assignment)));
     });
 
@@ -224,15 +228,16 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
       unsubUsers();
       unsubAssignments();
     };
-  }, []);
+  }, [activeSectionId, isSuperAdmin, profile.uid]);
 
   const handleAddCourse = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCourse.trim()) return;
     try {
-      await addDoc(collection(db, 'courses'), {
+      await addDoc(getSectionCollection(profile, 'courses'), {
         name: newCourse.trim(),
         createdBy: profile.uid,
+        sectionId: activeSectionId,
       });
       setNewCourse('');
     } catch (error) {
@@ -244,7 +249,7 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
     if (!editingCourse || !editingCourse.name.trim()) return;
     setIsUpdating(true);
     try {
-      await updateDoc(doc(db, 'courses', editingCourse.id!), {
+      await updateDoc(getSectionDoc(profile, 'courses', editingCourse.id!), {
         name: editingCourse.name,
       });
       setEditingCourse(null);
@@ -260,10 +265,11 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
     e.preventDefault();
     if (!newAnnouncement.title.trim() || !newAnnouncement.content.trim()) return;
     try {
-      await addDoc(collection(db, 'announcements'), {
+      await addDoc(getSectionCollection(profile, 'announcements'), {
         ...newAnnouncement,
         createdAt: new Date().toISOString(),
         createdBy: profile.uid,
+        sectionId: activeSectionId,
       });
       setNewAnnouncement({ title: '', content: '', priority: 'normal' });
     } catch (error) {
@@ -291,13 +297,14 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
     
     setIsUpdating(true);
     try {
-      await addDoc(collection(db, 'assignments'), {
+      await addDoc(getSectionCollection(profile, 'assignments'), {
         ...newAssignment,
         userId: profile.uid, // Default to the admin themselves if no student is selected
         total_hours: 1, // Default to 1 to avoid division by zero
         completed_hours: 0,
         urgency: calculateUrgency(newAssignment.deadline, 0, 1),
         createdBy: 'admin',
+        sectionId: activeSectionId,
         createdAt: serverTimestamp(),
       });
       setNewAssignment({ title: '', course: '', deadline: '', type: 'Assignment', syllabus: '' });
@@ -311,7 +318,9 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
   const deleteDocById = async (col: string, id: string) => {
     setIsDeleting(true);
     try {
-      await deleteDoc(doc(db, col, id));
+      const sectionCollections = ['courses', 'announcements', 'assignments'];
+      const docRef = sectionCollections.includes(col) ? getSectionDoc(profile, col, id) : doc(db, col, id);
+      await deleteDoc(docRef);
       setShowConfirmDelete(false);
       setDocToDelete(null);
     } catch (error) {
@@ -349,7 +358,7 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
             Admin Console
           </h1>
           <p className="text-neutral-500 dark:text-neutral-400 font-medium text-sm">
-            Managing {users.filter(u => u.role === 'student').length} Active Students
+            Managing {users.filter(u => u.role === 'student').length} Active Students in this section
           </p>
         </div>
         <div className="flex items-center gap-3 bg-white dark:bg-neutral-900 px-4 py-2.5 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm transition-colors">
@@ -408,7 +417,7 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
             { id: 'assignments', label: 'Assignments', icon: LayoutGrid },
             { id: 'history', label: 'History', icon: Clock },
             { id: 'students', label: 'Students', icon: Users },
-            ...(profile.email === 'carlesirodriguez7@gmail.com' ? [{ id: 'all_users', label: 'All Users', icon: ShieldCheck }] : []),
+            ...(isSuperAdmin ? [{ id: 'all_users', label: 'All Users', icon: ShieldCheck }] : []),
           ].map((tab) => (
             <button 
               key={tab.id}
@@ -1137,11 +1146,11 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
                                 onClick={() => toggleUserStatus(student)}
                                 disabled={isProcessing === student.uid}
                                 className={`p-3 rounded-xl transition-all ${
-                                  student.role === 'admin' 
+                                  student.role === 'admin' || student.role === 'sectionAdmin' 
                                   ? 'bg-neutral-900 text-white dark:bg-neutral-50 dark:text-neutral-900' 
                                   : 'bg-neutral-50 text-neutral-400 hover:text-neutral-900 dark:bg-neutral-800 dark:text-neutral-500 dark:hover:text-neutral-50'
                                 }`}
-                                title={student.role === 'admin' ? "Revoke Admin" : "Make Admin"}
+                                title={student.role === 'admin' || student.role === 'sectionAdmin' ? "Revoke Admin" : "Make Admin"}
                               >
                                 <ShieldCheck className="w-4 h-4" />
                               </button>
@@ -1181,7 +1190,7 @@ export default function AdminDashboard({ profile }: AdminDashboardProps) {
           </motion.div>
         )}
 
-        {activeTab === 'all_users' && profile.email === 'carlesirodriguez7@gmail.com' && (
+        {activeTab === 'all_users' && isSuperAdmin && (
           <motion.div 
             key="all_users"
             initial={{ opacity: 0, y: 10 }}
