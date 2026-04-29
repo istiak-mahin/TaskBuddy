@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../firebase';
 import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, orderBy, limit } from 'firebase/firestore';
 import { Assignment, UserProfile, Course, Announcement, AppNotification } from '../types';
+import { getActiveSectionId, getSectionCollection, getSectionDoc } from '../services/sectionService';
 import { Plus, Trash2, CheckCircle2, AlertCircle, Clock, BookOpen, BarChart3, X, Megaphone, Trophy, Target, Bell, Search, Filter, History, Star, Loader2, Send, Edit2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -150,6 +151,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
   const [viewingSyllabus, setViewingSyllabus] = useState<Assignment | null>(null);
 
   const [currentTime, setCurrentTime] = useState(new Date());
+  const activeSectionId = getActiveSectionId(profile);
   const contentRef = useRef<HTMLDivElement>(null);
 
   const scrollToContent = () => {
@@ -170,7 +172,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
   }, []);
 
   useEffect(() => {
-    const q = query(collection(db, 'assignments'), orderBy('createdAt', 'desc'));
+    const q = query(getSectionCollection(profile, 'assignments'), orderBy('createdAt', 'desc'));
       
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Assignment));
@@ -178,18 +180,18 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       setLoading(false);
     });
 
-    const subQ = query(collection(db, 'courses'));
+    const subQ = query(getSectionCollection(profile, 'courses'));
     const unsubscribeSubs = onSnapshot(subQ, (snapshot) => {
       setCourses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Course)));
     });
 
-    const annQ = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(20));
+    const annQ = query(getSectionCollection(profile, 'announcements'), orderBy('createdAt', 'desc'), limit(20));
     const unsubscribeAnns = onSnapshot(annQ, (snapshot) => {
       setAnnouncements(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Announcement)));
     });
 
     const notifQ = query(
-      collection(db, 'notifications'), 
+      getSectionCollection(profile, 'notifications'), 
       where('userId', '==', profile.uid),
       orderBy('createdAt', 'desc'),
       limit(20)
@@ -214,7 +216,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       unsubscribeAnns();
       unsubscribeNotifs();
     };
-  }, [profile.uid, isAdmin, studentId]);
+  }, [profile.uid, isAdmin, studentId, activeSectionId]);
 
   const calculateTimeProgress = (assignment: Assignment) => {
     if (isTaskDone(assignment)) return 100;
@@ -259,13 +261,14 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
     e.preventDefault();
     if (!isAdmin) return;
     try {
-      await addDoc(collection(db, 'assignments'), {
+      await addDoc(getSectionCollection(profile, 'assignments'), {
         ...newAssignment,
         userId: isAdmin && studentId ? studentId : profile.uid,
         total_hours: 1,
         completed_hours: 0,
         urgency: 'low',
         createdBy: 'admin',
+        sectionId: activeSectionId,
         createdAt: serverTimestamp(),
       });
       setShowAddModal(false);
@@ -279,7 +282,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
     e.preventDefault();
     if (!isAdmin || !editingAssignment) return;
     try {
-      const docRef = doc(db, 'assignments', editingAssignment.id);
+      const docRef = getSectionDoc(profile, 'assignments', editingAssignment.id!);
       await updateDoc(docRef, {
         title: editingAssignment.title,
         course: editingAssignment.course,
@@ -297,7 +300,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
     if (!isAdmin) return;
     setIsDeleting(true);
     try {
-      await deleteDoc(doc(db, 'assignments', id));
+      await deleteDoc(getSectionDoc(profile, 'assignments', id));
       setShowConfirmDelete(false);
       setDocToDelete(null);
     } catch (error) {
@@ -314,14 +317,15 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       const message = `Reminder: Your assignment "${assignment.title}" for ${assignment.course} is due on ${new Date(assignment.deadline).toLocaleDateString()}.`;
 
       // 1. Send In-App Notification
-      await addDoc(collection(db, 'notifications'), {
+      await addDoc(getSectionCollection(profile, 'notifications'), {
         userId: studentId,
         title,
         message,
         type: 'reminder',
         read: false,
         createdAt: new Date().toISOString(),
-        assignmentId: assignment.id
+        assignmentId: assignment.id,
+        sectionId: activeSectionId
       });
 
       // 2. Send Email Reminder via Server
@@ -329,7 +333,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
         await fetch('/api/reminders/email', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: studentId, title, message })
+          body: JSON.stringify({ userId: studentId, title, message, sectionId: activeSectionId })
         });
       } catch (e) {
         console.error('Failed to trigger email reminder:', e);
@@ -343,7 +347,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
 
   const markNotificationAsRead = async (id: string) => {
     try {
-      await updateDoc(doc(db, 'notifications', id), { read: true });
+      await updateDoc(getSectionDoc(profile, 'notifications', id), { read: true });
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
@@ -352,7 +356,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
   const markAllNotificationsAsRead = async () => {
     try {
       const unreadNotifs = notifications.filter(n => !n.read);
-      const promises = unreadNotifs.map(n => updateDoc(doc(db, 'notifications', n.id!), { read: true }));
+      const promises = unreadNotifs.map(n => updateDoc(getSectionDoc(profile, 'notifications', n.id!), { read: true }));
       await Promise.all(promises);
     } catch (error) {
       console.error('Error marking all notifications as read:', error);
@@ -362,10 +366,11 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
   const handleAddNotice = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await addDoc(collection(db, 'announcements'), {
+      await addDoc(getSectionCollection(profile, 'announcements'), {
         ...newNotice,
         createdAt: new Date().toISOString(),
         createdBy: profile.uid,
+        sectionId: activeSectionId,
       });
       setShowAddNoticeModal(false);
       setNewNotice({ title: '', content: '', priority: 'normal' });

@@ -129,34 +129,43 @@ async function startServer() {
     ];
 
     try {
-      const assignmentsRef = fdb.collection("assignments");
+      const sectionsSnapshot = await fdb.collection("sections").get();
       
       for (const window of timeWindows) {
         const startTime = new Date(now.getTime() + window.offsetMs);
         const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // 30 min window to match interval
 
-        const snapshot = await assignmentsRef
-          .where("deadline", ">=", startTime.toISOString())
-          .where("deadline", "<", endTime.toISOString())
-          .get();
+        for (const sectionDoc of sectionsSnapshot.docs) {
+          const snapshot = await fdb
+            .collection("sections")
+            .doc(sectionDoc.id)
+            .collection("assignments")
+            .where("deadline", ">=", startTime.toISOString())
+            .where("deadline", "<", endTime.toISOString())
+            .get();
 
-        for (const doc of snapshot.docs) {
-          const assignment = doc.data();
-          if (assignment.urgency === 'done') continue;
+          for (const doc of snapshot.docs) {
+            const assignment = doc.data();
+            if (assignment.urgency === 'done') continue;
 
-          const userId = assignment.userId;
-          const message = `Reminder: Your ${assignment.type} "${assignment.title}" for ${assignment.course} is due in about ${window.label}. Good luck!`;
+            const userId = assignment.userId;
+            const message = `Reminder: Your ${assignment.type} "${assignment.title}" for ${assignment.course} is due in about ${window.label}. Good luck!`;
 
-          // 1. Create in-app notification
-          await fdb.collection("notifications").add({
-            userId,
-            title: window.title,
-            message,
-            type: "reminder",
-            read: false,
-            createdAt: new Date().toISOString(),
-            assignmentId: doc.id
-          });
+            // 1. Create in-app notification inside the assignment section
+            await fdb
+              .collection("sections")
+              .doc(sectionDoc.id)
+              .collection("notifications")
+              .add({
+                userId,
+                title: window.title,
+                message,
+                type: "reminder",
+                read: false,
+                createdAt: new Date().toISOString(),
+                assignmentId: doc.id,
+                sectionId: sectionDoc.id
+              });
           
           // 2. Send automated email via Resend
           const htmlMessage = `
@@ -178,7 +187,8 @@ async function startServer() {
 
           await sendEmailReminder(userId, window.title, htmlMessage, message);
           
-          console.log(`Sent ${window.label} reminder (App & Email) to user ${userId} for assignment ${doc.id}`);
+            console.log(`Sent ${window.label} reminder (App & Email) to user ${userId} for assignment ${doc.id}`);
+          }
         }
       }
     } catch (error) {
@@ -202,14 +212,23 @@ async function startServer() {
         const userId = userDoc.id;
         const message = motivations[Math.floor(Math.random() * motivations.length)];
         
-        await fdb.collection("notifications").add({
-          userId,
-          title: "💡 Motivation for You",
-          message,
-          type: "system",
-          read: false,
-          createdAt: new Date().toISOString()
-        });
+        const user = userDoc.data();
+        const sectionId = user.activeSectionId || user.sectionIds?.[0];
+        if (!sectionId) continue;
+
+        await fdb
+          .collection("sections")
+          .doc(sectionId)
+          .collection("notifications")
+          .add({
+            userId,
+            title: "💡 Motivation for You",
+            message,
+            type: "system",
+            read: false,
+            createdAt: new Date().toISOString(),
+            sectionId
+          });
       }
     } catch (error) {
       console.error("Error sending motivational reminders:", error);

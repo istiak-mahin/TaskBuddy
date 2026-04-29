@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { auth, db } from '../firebase';
-import { doc, updateDoc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, writeBatch } from 'firebase/firestore';
 import { UserProfile } from '../types';
+import { isSuperAdminEmail } from '../services/sectionService';
 import {
   X,
   Camera,
@@ -112,11 +113,11 @@ export default function ProfileModal({
       );
     }
 
-    const finalUsername = `@${inputUsername}`;
+    const finalUsername = inputUsername.toLowerCase();
+    const currentUsername = (profile.username || '').replace(/^@/, '').toLowerCase();
 
-    if (finalUsername !== profile.username) {
-      const usernameDocId = finalUsername.toLowerCase();
-      const usernameDoc = await getDoc(doc(db, 'usernames', usernameDocId));
+    if (finalUsername !== currentUsername) {
+      const usernameDoc = await getDoc(doc(db, 'usernames', finalUsername));
 
       if (usernameDoc.exists() && usernameDoc.data()?.uid !== profile.uid) {
         throw new Error('This username is already taken. Please try another.');
@@ -179,22 +180,35 @@ export default function ProfileModal({
         name: formData.name.trim() || profile.name,
         username: finalUsername,
         photoURL: currentPhotoURL,
-        role: formData.role as 'student' | 'admin',
       };
 
-      if (finalUsername !== profile.username) {
-        if (profile.username) {
-          await deleteDoc(doc(db, 'usernames', profile.username.toLowerCase()));
+      if (canManageRoles) {
+        updates.role = formData.role;
+      };
+
+      const previousUsername = (profile.username || '').replace(/^@/, '').toLowerCase();
+      const usernameChanged = finalUsername !== previousUsername;
+      const batch = writeBatch(db);
+
+      if (usernameChanged) {
+        if (previousUsername) {
+          batch.delete(doc(db, 'usernames', previousUsername));
+        }
+
+        // Clean up legacy username docs that were saved with @ from older versions.
+        if (profile.username?.startsWith('@')) {
+          batch.delete(doc(db, 'usernames', profile.username.toLowerCase()));
         }
 
         if (finalUsername) {
-          await setDoc(doc(db, 'usernames', finalUsername.toLowerCase()), {
+          batch.set(doc(db, 'usernames', finalUsername), {
             uid: profile.uid,
           });
         }
       }
 
-      await updateDoc(doc(db, 'users', profile.uid), updates);
+      batch.update(doc(db, 'users', profile.uid), updates);
+      await batch.commit();
 
       onUpdate(updates);
       setFormData((prev) => ({
@@ -227,6 +241,9 @@ export default function ProfileModal({
   };
 
   const currentImage = previewURL || formData.photoURL;
+  const canManageRoles = isAdmin && isSuperAdminEmail(auth.currentUser?.email || profile.email);
+  const roleOptions: UserProfile["role"][] = ["student", "sectionAdmin"];
+
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6 backdrop-blur-sm">
@@ -369,34 +386,31 @@ export default function ProfileModal({
             </p>
           </div>
 
-          {isAdmin && (
+          {canManageRoles && !isSuperAdminEmail(profile.email) && (
             <div className="space-y-2">
               <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
                 User Role
               </label>
               <div className="flex gap-3">
-                {['student', 'admin'].map((r) => (
+                {roleOptions.map((r) => (
                   <button
                     key={r}
                     type="button"
-                    onClick={() =>
-                      setFormData({ ...formData, role: r as 'student' | 'admin' })
-                    }
-                    disabled={saving || profile.email === 'carlesirodriguez7@gmail.com'}
+                    onClick={() => setFormData({ ...formData, role: r })}
+                    disabled={saving}
                     className={`flex-1 rounded-xl border py-3 text-xs font-bold uppercase tracking-widest transition-all ${
                       formData.role === r
                         ? 'border-neutral-900 bg-neutral-900 text-white dark:border-neutral-50 dark:bg-neutral-50 dark:text-neutral-900'
                         : 'border-neutral-200 bg-neutral-50 text-neutral-500 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:border-neutral-600'
-                    } ${
-                      profile.email === 'carlesirodriguez7@gmail.com'
-                        ? 'cursor-not-allowed opacity-50'
-                        : ''
                     }`}
                   >
-                    {r}
+                    {r === 'sectionAdmin' ? 'Section Admin' : 'Student'}
                   </button>
                 ))}
               </div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                Super Admin access is controlled only by VITE_SUPER_ADMIN_EMAILS, not by profile role.
+              </p>
             </div>
           )}
 
