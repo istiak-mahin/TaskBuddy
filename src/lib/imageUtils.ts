@@ -1,37 +1,89 @@
 /**
  * Generates a small DataURL (Base64) for an image.
- * Useful for Firestore fallbacks or small thumbnails.
+ * This is designed for Firestore profile photo fallback, so it keeps the final
+ * payload small enough to avoid document-size issues.
  */
 export async function generateThumbnail(
   file: File,
   maxWidth: number = 256,
-  quality: number = 0.5
+  quality: number = 0.65
 ): Promise<string> {
-  const blob = await compressImage(file, maxWidth, quality);
-
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error('Failed to read thumbnail data.'));
-    reader.readAsDataURL(blob);
-  });
+  return generateSmallImageDataUrl(file, maxWidth, quality);
 }
 
-/**
- * Resizes and compresses an image file with strong fallbacks for mobile & desktop.
- * Returns a Blob or the original File.
- */
-export async function compressImage(
+export async function generateSmallImageDataUrl(
   file: File,
-  maxWidth: number = 512,
-  quality: number = 0.8
-): Promise<Blob | File> {
+  maxWidth: number = 256,
+  quality: number = 0.65,
+  maxDataUrlChars: number = 750_000
+): Promise<string> {
   if (!file || file.size === 0) {
     throw new Error('Image source is invalid or empty.');
   }
 
   if (!file.type.startsWith('image/')) {
     throw new Error('Please select a valid image file.');
+  }
+
+  if (isHeicLike(file)) {
+    throw new Error(
+      'HEIC photos are not reliably supported here. Please convert the image to JPG or PNG first.'
+    );
+  }
+
+  const attempts = [
+    { width: maxWidth, quality },
+    { width: Math.min(maxWidth, 220), quality: 0.58 },
+    { width: Math.min(maxWidth, 192), quality: 0.5 },
+    { width: Math.min(maxWidth, 160), quality: 0.42 },
+  ];
+
+  let lastDataUrl = '';
+
+  for (const attempt of attempts) {
+    const blob = await resizeImageToJpeg(file, attempt.width, attempt.quality);
+    const dataUrl = await blobToDataUrl(blob);
+    lastDataUrl = dataUrl;
+
+    if (dataUrl.length <= maxDataUrlChars) {
+      return dataUrl;
+    }
+  }
+
+  console.warn('[ImageAudit] Profile image still large after aggressive compression:', {
+    chars: lastDataUrl.length,
+    maxDataUrlChars,
+  });
+
+  if (lastDataUrl.length <= 950_000) {
+    return lastDataUrl;
+  }
+
+  throw new Error('The photo is too large after compression. Please select a smaller JPG or PNG image.');
+}
+
+/**
+ * Resizes and compresses an image file with strong fallbacks for mobile & desktop.
+ * Returns a Blob. This function always compresses instead of returning the original
+ * image, which prevents large phone photos from being saved directly to Firestore.
+ */
+export async function compressImage(
+  file: File,
+  maxWidth: number = 512,
+  quality: number = 0.8
+): Promise<Blob> {
+  if (!file || file.size === 0) {
+    throw new Error('Image source is invalid or empty.');
+  }
+
+  if (!file.type.startsWith('image/')) {
+    throw new Error('Please select a valid image file.');
+  }
+
+  if (isHeicLike(file)) {
+    throw new Error(
+      'HEIC photos are not reliably supported here. Please convert the image to JPG or PNG first.'
+    );
   }
 
   const fileSizeKB = file.size / 1024;
@@ -42,49 +94,50 @@ export async function compressImage(
     size: `${fileSizeKB.toFixed(2)}KB`,
   });
 
-  // Very small files do not need compression.
-  if (fileSizeKB < 250) {
-    console.log('[ImageAudit] Small image detected. Skipping compression.');
-    return file;
-  }
+  return resizeImageToJpeg(file, maxWidth, quality);
+}
 
-  // HEIC often fails in browser decoding on many devices.
-  if (
+function isHeicLike(file: File) {
+  return (
     file.type === 'image/heic' ||
     file.type === 'image/heif' ||
     /\.(heic|heif)$/i.test(file.name)
-  ) {
-    throw new Error(
-      'HEIC photos are not reliably supported here. Please convert the image to JPG or PNG first.'
-    );
-  }
+  );
+}
 
+async function resizeImageToJpeg(
+  file: File,
+  maxWidth: number,
+  quality: number
+): Promise<Blob> {
   const objectUrl = URL.createObjectURL(file);
 
   try {
     const img = await loadImageFromObjectUrl(objectUrl);
 
-    if (!img.width || !img.height) {
+    const sourceWidth = img.width;
+    const sourceHeight = img.height;
+
+    if (!sourceWidth || !sourceHeight) {
       throw new Error('Selected photo has invalid dimensions.');
     }
 
-    let { width, height } = img;
+    let width = sourceWidth;
+    let height = sourceHeight;
 
     if (width > height) {
       if (width > maxWidth) {
         height = Math.round((height * maxWidth) / width);
         width = maxWidth;
       }
-    } else {
-      if (height > maxWidth) {
-        width = Math.round((width * maxWidth) / height);
-        height = maxWidth;
-      }
+    } else if (height > maxWidth) {
+      width = Math.round((width * maxWidth) / height);
+      height = maxWidth;
     }
 
     const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
+    canvas.width = Math.max(1, width);
+    canvas.height = Math.max(1, height);
 
     const ctx = canvas.getContext('2d', { alpha: false });
 
@@ -92,29 +145,27 @@ export async function compressImage(
       throw new Error('Browser canvas failure. Please try a different browser.');
     }
 
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, 0, 0, width, height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
     const compressedBlob = await canvasToBlob(canvas, 'image/jpeg', quality);
-
-    // If compression somehow makes it bigger, keep the original file.
-    if (compressedBlob.size >= file.size) {
-      console.log('[ImageAudit] Compression not useful. Using original file.');
-      return file;
-    }
 
     console.log('[ImageAudit] Success:', {
       original: `${(file.size / 1024).toFixed(2)}KB`,
       compressed: `${(compressedBlob.size / 1024).toFixed(2)}KB`,
-      width,
-      height,
+      width: canvas.width,
+      height: canvas.height,
     });
 
     return compressedBlob;
   } catch (error) {
-    console.warn('[ImageAudit] Compression failed. Using original file.', error);
-    return file;
+    console.warn('[ImageAudit] Compression failed:', error);
+    throw error instanceof Error
+      ? error
+      : new Error('Photo processing failed. Please try another image.');
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
@@ -123,13 +174,12 @@ export async function compressImage(
 async function loadImageFromObjectUrl(
   objectUrl: string
 ): Promise<HTMLImageElement | ImageBitmap> {
-  // Faster and more reliable path when supported
   if ('createImageBitmap' in window) {
     try {
       const response = await fetch(objectUrl);
       const blob = await response.blob();
       return await Promise.race([
-        createImageBitmap(blob),
+        createImageBitmap(blob, { imageOrientation: 'from-image' }),
         timeoutReject<ImageBitmap>(12000, 'Image decoding timed out.'),
       ]);
     } catch {
@@ -179,6 +229,15 @@ function canvasToBlob(
     } catch {
       reject(new Error('Hardware/browser restriction blocked image processing.'));
     }
+  });
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('Failed to read thumbnail data.'));
+    reader.readAsDataURL(blob);
   });
 }
 

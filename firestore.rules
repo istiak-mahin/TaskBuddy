@@ -155,6 +155,23 @@ service cloud.firestore {
              (!('updatedAt' in data) || data.updatedAt is timestamp || isValidDateString(data.updatedAt));
     }
 
+    function isValidOwnerSectionMove() {
+      let code = request.resource.data.get('joinCodeUsed', '');
+      let activeSectionId = request.resource.data.get('activeSectionId', '');
+      let sectionIds = request.resource.data.get('sectionIds', []);
+
+      return code is string &&
+             code.size() > 0 &&
+             activeSectionId is string &&
+             activeSectionId.size() > 0 &&
+             sectionIds is list &&
+             sectionIds.size() == 1 &&
+             sectionIds[0] == activeSectionId &&
+             exists(/databases/$(database)/documents/joinCodes/$(code)) &&
+             get(/databases/$(database)/documents/joinCodes/$(code)).data.sectionId == activeSectionId &&
+             get(/databases/$(database)/documents/joinCodes/$(code)).data.active == true;
+    }
+
     function isSafeOwnerUserUpdate(userId) {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
 
@@ -178,10 +195,17 @@ service cloud.firestore {
                request.resource.data.get('email', request.auth.token.email) == request.auth.token.email ||
                request.resource.data.get('email', '') == resource.data.get('email', '')
              ) &&
-             request.resource.data.get('role', resource.data.get('role', 'student')) == resource.data.get('role', 'student') &&
+             (
+               request.resource.data.get('role', resource.data.get('role', 'student')) == resource.data.get('role', 'student') ||
+               request.resource.data.get('role', 'student') == 'student'
+             ) &&
              request.resource.data.get('disabled', resource.data.get('disabled', false)) == resource.data.get('disabled', false) &&
              request.resource.data.get('sectionIds', []) is list &&
-             request.resource.data.get('activeSectionId', '') is string;
+             request.resource.data.get('activeSectionId', '') is string &&
+             (
+               !changed.hasAny(['sectionIds', 'activeSectionId', 'joinCodeUsed']) ||
+               isValidOwnerSectionMove()
+             );
     }
 
     function isValidJoinCode(data) {
@@ -280,16 +304,16 @@ service cloud.firestore {
     match /joinCodes/{code} {
       allow get: if isAuthenticated();
       allow list: if isAdmin();
-      allow create: if isAdmin() && isValidJoinCode(request.resource.data);
-      allow update: if isAdmin() && isValidJoinCode(request.resource.data);
-      allow delete: if isAdmin();
+      allow create: if (isAdmin() || isSectionAdmin(request.resource.data.sectionId)) && isValidJoinCode(request.resource.data);
+      allow update: if (isAdmin() || isSectionAdmin(request.resource.data.sectionId) || isSectionAdmin(resource.data.sectionId)) && isValidJoinCode(request.resource.data);
+      allow delete: if isAdmin() || isSectionAdmin(resource.data.sectionId);
     }
 
     match /sections/{sectionId} {
-      allow get: if isAuthenticated() && (isAdmin() || isSectionMember(sectionId));
+      allow get: if isAuthenticated();
       allow list: if isAdmin();
       allow create: if isAdmin() && isValidSection(request.resource.data);
-      allow update: if isAdmin() && isValidSection(request.resource.data);
+      allow update: if (isAdmin() || isSectionAdmin(sectionId)) && isValidSection(request.resource.data);
       allow delete: if isAdmin();
 
       match /students/{studentId} {
@@ -307,7 +331,7 @@ service cloud.firestore {
                         request.auth.uid == studentId
                       );
 
-        allow delete: if isSectionAdmin(sectionId) || isAdmin();
+        allow delete: if isSectionAdmin(sectionId) || isAdmin() || (isAuthenticated() && request.auth.uid == studentId);
       }
 
       match /assignments/{assignmentId} {

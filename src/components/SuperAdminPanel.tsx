@@ -22,6 +22,7 @@ import {
 import { motion } from 'motion/react';
 import { db } from '../firebase';
 import { Section, UserProfile, UserRole } from '../types';
+import { changeUserSectionAsAdmin, normalizeJoinCode } from '../services/sectionService';
 
 const emptySectionForm = { name: '', department: '', semester: '', batch: '', joinCode: '' };
 
@@ -39,8 +40,9 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
   const [error, setError] = useState('');
   const [loadingData, setLoadingData] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
+  const [userEditForm, setUserEditForm] = useState({ sectionName: '', department: '', role: 'student' as UserRole });
 
-  const normalizeJoinCode = (value: string) => value.trim().toUpperCase().replace(/\s+/g, '');
   const getDepartmentLabel = (section?: Pick<Section, 'department'> | null) =>
     section?.department?.trim() || 'No Department';
 
@@ -94,7 +96,7 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
   const sectionNames = useMemo(() => {
     return Array.from(
       new Set(sections.map((section) => section.name).filter(Boolean))
-    ).sort((a, b) => a.localeCompare(b));
+    ).sort((a, b) => String(a).localeCompare(String(b)));
   }, [sections]);
 
   const departmentsForSelectedSection = useMemo(() => {
@@ -106,8 +108,32 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
           .filter((section) => section.name === assignForm.sectionName)
           .map((section) => getDepartmentLabel(section))
       )
-    ).sort((a, b) => a.localeCompare(b));
+    ).sort((a, b) => String(a).localeCompare(String(b)));
   }, [sections, assignForm.sectionName]);
+
+  const departmentsForUserEditSection = useMemo(() => {
+    if (!userEditForm.sectionName) return [];
+
+    return Array.from(
+      new Set(
+        sections
+          .filter((section) => section.name === userEditForm.sectionName)
+          .map((section) => getDepartmentLabel(section))
+      )
+    ).sort((a, b) => String(a).localeCompare(String(b)));
+  }, [sections, userEditForm.sectionName]);
+
+  const selectedUserEditSection = useMemo(() => {
+    if (!userEditForm.sectionName || !userEditForm.department) return null;
+
+    return (
+      sections.find(
+        (section) =>
+          section.name === userEditForm.sectionName &&
+          getDepartmentLabel(section) === userEditForm.department
+      ) || null
+    );
+  }, [sections, userEditForm.sectionName, userEditForm.department]);
 
   const selectedAssignSection = useMemo(() => {
     if (!assignForm.sectionName || !assignForm.department) return null;
@@ -176,7 +202,11 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
       };
 
       setSections((prev) => [newSection, ...prev]);
-      setAssignForm((prev) => ({ ...prev, sectionId: sectionRef.id }));
+      setAssignForm((prev) => ({
+        ...prev,
+        sectionName: sectionForm.name.trim(),
+        department: sectionForm.department.trim() || 'No Department',
+      }));
       setSectionForm(emptySectionForm);
       setMessage(normalizedJoinCode ? `Section created. Join code: ${normalizedJoinCode}` : 'Section created successfully.');
     } catch (err: any) {
@@ -360,70 +390,68 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
         return;
       }
 
-      const existingSectionIds = target.sectionIds || [];
-      const nextSectionIds = Array.from(new Set([...existingSectionIds, section.id])).filter(Boolean);
-      const nextRole = assignForm.role === 'sectionAdmin' ? 'sectionAdmin' : 'student';
-      const nextActiveSectionId = target.activeSectionId || section.id;
-      const nextAdminIds = nextRole === 'sectionAdmin'
-        ? Array.from(new Set([...(section.adminIds || []), target.uid]))
-        : (section.adminIds || []).filter((uid) => uid !== target.uid);
-
-      const batch = writeBatch(db);
-
-      batch.set(
-        doc(db, 'users', target.uid),
-        {
-          uid: target.uid,
-          name: target.name || 'Student',
-          email: target.email || email,
-          username: target.username || '',
-          role: nextRole,
-          sectionIds: nextSectionIds,
-          activeSectionId: nextActiveSectionId,
-          photoURL: target.photoURL || '',
-          disabled: target.disabled || false,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      batch.set(
-        doc(db, 'sections', section.id, 'students', target.uid),
-        {
-          uid: target.uid,
-          name: target.name || '',
-          email: target.email || email,
-          photoURL: target.photoURL || '',
-          role: nextRole,
-          joinedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      batch.update(doc(db, 'sections', section.id), {
-        adminIds: nextAdminIds,
-        updatedAt: serverTimestamp(),
-      });
-
-      await batch.commit();
-
-      setSections((prev) =>
-        prev.map((item) => (item.id === section.id ? { ...item, adminIds: nextAdminIds } : item))
-      );
-      setUsers((prev) =>
-        prev.map((item) =>
-          item.uid === target.uid
-            ? { ...item, role: nextRole, sectionIds: nextSectionIds, activeSectionId: nextActiveSectionId }
-            : item
-        )
-      );
+      await changeUserSectionAsAdmin(target, section, assignForm.role);
+      await loadData();
 
       setAssignForm((prev) => ({ ...prev, email: '' }));
-      setMessage(`${target.email || email} assigned to ${section.name} (${getDepartmentLabel(section)}).`);
+      setMessage(`${target.email || email} moved to ${section.name} (${getDepartmentLabel(section)}). Previous section access removed.`);
     } catch (err: any) {
       console.error('Assign user failed:', err);
-      setError(err?.message || 'Could not assign user.');
+      setError(err?.message || 'Could not change user section.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const getUserSectionLabel = (user: UserProfile) => {
+    const activeId = user.activeSectionId || user.sectionIds?.[0] || '';
+    const section = sections.find((item) => item.id === activeId);
+    if (!section) return activeId ? 'Unknown Section' : 'No Section';
+    return [section.name, getDepartmentLabel(section)].filter(Boolean).join(' • ');
+  };
+
+  const openUserEditor = (user: UserProfile) => {
+    const activeId = user.activeSectionId || user.sectionIds?.[0] || '';
+    const currentSection = sections.find((section) => section.id === activeId) || sections[0] || null;
+
+    setSelectedUser(user);
+    setUserEditForm({
+      sectionName: currentSection?.name || '',
+      department: currentSection ? getDepartmentLabel(currentSection) : '',
+      role: user.role === 'sectionAdmin' ? 'sectionAdmin' : 'student',
+    });
+    setError('');
+    setMessage('');
+  };
+
+  const closeUserEditor = () => {
+    if (saving) return;
+    setSelectedUser(null);
+  };
+
+  const handleSaveSelectedUser = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedUser || saving) return;
+
+    setSaving(true);
+    setMessage('');
+    setError('');
+
+    try {
+      const section = selectedUserEditSection;
+
+      if (!section?.id) {
+        setError('Please select both section and department.');
+        return;
+      }
+
+      await changeUserSectionAsAdmin(selectedUser, section, userEditForm.role);
+      await loadData();
+      setSelectedUser(null);
+      setMessage(`${selectedUser.email || selectedUser.name || 'User'} updated successfully. Previous section access removed.`);
+    } catch (err: any) {
+      console.error('Selected user update failed:', err);
+      setError(err?.message || 'Could not update user.');
     } finally {
       setSaving(false);
     }
@@ -434,7 +462,7 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
           <h1 className="text-4xl font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight mb-1">Super Admin Console</h1>
-          <p className="text-neutral-500 dark:text-neutral-400 font-medium text-sm">Create, edit, delete sections, manage join codes, and assign section admins.</p>
+          <p className="text-neutral-500 dark:text-neutral-400 font-medium text-sm">Create, edit, delete sections, manage join codes, and change user sections, manage enrollment keys, and assign section admins.</p>
         </div>
         <div className="flex items-center gap-3">
           <button type="button" onClick={loadData} disabled={loadingData} className="flex items-center gap-2 bg-white dark:bg-neutral-900 px-4 py-2.5 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm text-[11px] font-bold text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 transition-colors disabled:opacity-50">
@@ -476,13 +504,13 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
         <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-8 h-8 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg flex items-center justify-center text-emerald-500"><UserPlus className="w-4 h-4" /></div>
-            <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">Assign User</h3>
+            <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">Change User Section</h3>
           </div>
           <form onSubmit={handleAssignUser} className="space-y-4">
             <input
               value={assignForm.email}
               onChange={(event) => setAssignForm((prev) => ({ ...prev, email: event.target.value }))}
-              placeholder="student@email.com"
+              placeholder="user@email.com"
               className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none focus:ring-2 focus:ring-neutral-900/5 transition-all"
             />
 
@@ -530,7 +558,7 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
               <option value="student">Student</option>
               <option value="sectionAdmin">Section Admin</option>
             </select>
-            <button disabled={saving} className="w-full bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-3 rounded-xl text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors disabled:opacity-50">{saving ? 'Saving...' : 'Assign User'}</button>
+            <button disabled={saving} className="w-full bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-3 rounded-xl text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors disabled:opacity-50">{saving ? 'Saving...' : 'Change User Section'}</button>
           </form>
         </div>
       </div>
@@ -598,20 +626,121 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
           <div className="space-y-3 max-h-[520px] overflow-y-auto custom-scrollbar">
             {filteredUsers.length === 0 && !loadingData && <p className="text-sm text-neutral-400 dark:text-neutral-500 font-medium">No users found.</p>}
             {filteredUsers.map((user) => (
-              <div key={user.uid} className="p-4 rounded-2xl bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700">
+              <button
+                type="button"
+                key={user.uid}
+                onClick={() => openUserEditor(user)}
+                className="w-full text-left p-4 rounded-2xl bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700 hover:border-blue-200 dark:hover:border-blue-800 hover:bg-blue-50/40 dark:hover:bg-blue-900/10 transition-all group"
+              >
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="font-semibold text-neutral-900 dark:text-neutral-50">{user.name || 'Unnamed User'}</p>
                     <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">{user.email || 'No email'}</p>
-                    <p className="text-[10px] uppercase tracking-widest text-neutral-400 mt-2">{user.role || 'student'}</p>
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                      <span className="text-[10px] uppercase tracking-widest text-neutral-400">{user.role || 'student'}</span>
+                      <span className="text-[10px] font-black uppercase tracking-widest text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity">Click to edit</span>
+                    </div>
                   </div>
-                  <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400">{user.sectionIds?.length || 0} sections</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400 max-w-[160px] text-right">{getUserSectionLabel(user)}</span>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>
       </div>
+
+      {selectedUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={closeUserEditor}>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="w-full max-w-lg bg-white dark:bg-neutral-900 rounded-3xl border border-neutral-200 dark:border-neutral-800 shadow-2xl overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="p-6 border-b border-neutral-100 dark:border-neutral-800 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-500 mb-2">Edit User</p>
+                <h3 className="text-xl font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">{selectedUser.name || 'Unnamed User'}</h3>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">{selectedUser.email || 'No email'}</p>
+              </div>
+              <button type="button" onClick={closeUserEditor} disabled={saving} className="w-9 h-9 flex items-center justify-center rounded-xl bg-neutral-50 dark:bg-neutral-800 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-50 transition-colors disabled:opacity-50">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSelectedUser} className="p-6 space-y-4">
+              <div className="rounded-2xl bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700 p-4">
+                <p className="text-[10px] font-black uppercase tracking-widest text-neutral-400">Current Section</p>
+                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50 mt-1">{getUserSectionLabel(selectedUser)}</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider ml-1">New Section</label>
+                <select
+                  value={userEditForm.sectionName}
+                  onChange={(event) => {
+                    const nextSectionName = event.target.value;
+                    const firstMatchingSection = sections.find((section) => section.name === nextSectionName);
+
+                    setUserEditForm((prev) => ({
+                      ...prev,
+                      sectionName: nextSectionName,
+                      department: firstMatchingSection ? getDepartmentLabel(firstMatchingSection) : '',
+                    }));
+                  }}
+                  className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none"
+                >
+                  <option value="">Select Section</option>
+                  {sectionNames.map((sectionName) => (
+                    <option key={sectionName} value={sectionName}>
+                      {sectionName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider ml-1">Department</label>
+                <select
+                  value={userEditForm.department}
+                  onChange={(event) => setUserEditForm((prev) => ({ ...prev, department: event.target.value }))}
+                  disabled={!userEditForm.sectionName}
+                  className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none disabled:opacity-60"
+                >
+                  <option value="">Select Department</option>
+                  {departmentsForUserEditSection.map((department) => (
+                    <option key={department} value={department}>
+                      {department}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider ml-1">Role</label>
+                <select
+                  value={userEditForm.role}
+                  onChange={(event) => setUserEditForm((prev) => ({ ...prev, role: event.target.value as UserRole }))}
+                  className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none"
+                >
+                  <option value="student">Student</option>
+                  <option value="sectionAdmin">Section Admin</option>
+                </select>
+              </div>
+
+              <div className="rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-900/40 p-4 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                Saving will move this user to only the selected section. Previous section access will be removed.
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={closeUserEditor} disabled={saving} className="flex-1 bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 py-3 rounded-xl text-sm font-semibold hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors disabled:opacity-50">Cancel</button>
+                <button type="submit" disabled={saving || !selectedUserEditSection} className="flex-1 bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-3 rounded-xl text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors disabled:opacity-50">{saving ? 'Saving...' : 'Save Changes'}</button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
     </motion.div>
   );
 }

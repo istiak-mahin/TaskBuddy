@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { doc, getDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { KeyRound, Loader2, ShieldCheck } from 'lucide-react';
 import { motion } from 'motion/react';
-import { db } from '../firebase';
 import { UserProfile } from '../types';
+import { changeOwnSectionWithJoinCode, normalizeJoinCode } from '../services/sectionService';
 
 interface JoinSectionProps {
   profile: UserProfile;
@@ -16,12 +15,10 @@ export default function JoinSection({ profile, onJoined }: JoinSectionProps) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
-  const normalizeCode = (value: string) => value.trim().toUpperCase().replace(/\s+/g, '');
-
   const handleJoin = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    const code = normalizeCode(joinCode);
+    const code = normalizeJoinCode(joinCode);
     if (!code || loading) return;
 
     setLoading(true);
@@ -29,65 +26,9 @@ export default function JoinSection({ profile, onJoined }: JoinSectionProps) {
     setError('');
 
     try {
-      const joinCodeRef = doc(db, 'joinCodes', code);
-      const joinCodeSnap = await getDoc(joinCodeRef);
-
-      if (!joinCodeSnap.exists()) {
-        setError('Invalid section code. Please check the code and try again.');
-        return;
-      }
-
-      const joinData = joinCodeSnap.data() as {
-        sectionId?: string;
-        sectionName?: string;
-        active?: boolean;
-      };
-
-      if (joinData.active === false || !joinData.sectionId) {
-        setError('This section code is inactive. Please contact your section admin.');
-        return;
-      }
-
-      const nextRole = profile.role === 'sectionAdmin' ? 'sectionAdmin' : 'student';
-      const nextSectionIds = Array.from(new Set([...(profile.sectionIds || []), joinData.sectionId])).filter(Boolean);
-
-      const batch = writeBatch(db);
-
-      batch.set(
-        doc(db, 'users', profile.uid),
-        {
-          uid: profile.uid,
-          name: profile.name || 'Student',
-          email: profile.email || '',
-          username: profile.username || '',
-          role: nextRole,
-          sectionIds: nextSectionIds,
-          activeSectionId: joinData.sectionId,
-          photoURL: profile.photoURL || '',
-          disabled: profile.disabled || false,
-          joinCodeUsed: code,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      batch.set(
-        doc(db, 'sections', joinData.sectionId, 'students', profile.uid),
-        {
-          uid: profile.uid,
-          name: profile.name || '',
-          email: profile.email || '',
-          photoURL: profile.photoURL || '',
-          role: nextRole,
-          joinedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      await batch.commit();
-
-      setMessage(`Joined ${joinData.sectionName || 'your section'} successfully.`);
-      onJoined(joinData.sectionId);
+      const result = await changeOwnSectionWithJoinCode(profile, code);
+      setMessage(`Joined ${result.sectionName || 'your section'} successfully.`);
+      onJoined(result.sectionId);
     } catch (err: any) {
       console.error('Join section failed:', err);
       setError(err?.message || 'Could not join section. Please try again.');
@@ -112,14 +53,14 @@ export default function JoinSection({ profile, onJoined }: JoinSectionProps) {
           Join Your Section
         </h1>
         <p className="text-sm text-neutral-500 dark:text-neutral-400 font-medium leading-relaxed mb-8">
-          Enter the section join code from your class admin. After joining, you will only see deadlines and announcements for your own section.
+          Enter the section enrollment key from your class admin. After joining, you will only see deadlines and announcements for your own section.
         </p>
 
         <form onSubmit={handleJoin} className="space-y-4">
           <input
             value={joinCode}
             onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
-            placeholder="Example: CSE63A2026"
+            placeholder="SECTION KEY"
             className="w-full px-5 py-4 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-2xl text-center text-sm sm:text-base font-black tracking-[0.2em] text-neutral-900 dark:text-neutral-50 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 uppercase transition-all"
           />
 
@@ -145,7 +86,7 @@ export default function JoinSection({ profile, onJoined }: JoinSectionProps) {
         )}
 
         <p className="mt-6 text-[11px] text-neutral-400 dark:text-neutral-500 font-semibold leading-relaxed">
-          No code? Ask your Super Admin or Section Admin to share the correct section code.
+          No key? Ask your Super Admin or Section Admin to share the correct section enrollment key.
         </p>
       </div>
     </motion.div>

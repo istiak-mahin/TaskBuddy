@@ -8,7 +8,7 @@ import {
   User,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp, getDocFromServer } from 'firebase/firestore';
-import { UserProfile, OperationType, FirestoreErrorInfo } from './types';
+import { UserProfile, OperationType, FirestoreErrorInfo, UserRole } from './types';
 import StudentDashboard from './components/StudentDashboard';
 import AdminDashboard from './components/AdminDashboard';
 import SuperAdminPanel from './components/SuperAdminPanel';
@@ -25,9 +25,43 @@ import {
   Sparkles,
   ShieldCheck,
   Zap,
+  MessageCircle,
 } from 'lucide-react';
 import { isSuperAdminEmail } from './services/sectionService';
 import { motion, AnimatePresence } from 'motion/react';
+
+type AppView = 'dashboard' | 'admin' | 'superadmin';
+
+const VIEW_STORAGE_PREFIX = 'taskbuddy:lastView:';
+const validViews: AppView[] = ['dashboard', 'admin', 'superadmin'];
+
+function isAdminRole(role?: UserRole) {
+  return role === 'admin' || role === 'sectionAdmin' || role === 'superAdmin';
+}
+
+function canOpenView(view: AppView, profile: UserProfile | null) {
+  if (view === 'dashboard') return true;
+  if (!profile) return false;
+
+  const superAdmin = isSuperAdminEmail(profile.email) || profile.role === 'superAdmin';
+  const admin = superAdmin || isAdminRole(profile.role);
+
+  if (view === 'superadmin') return superAdmin;
+  if (view === 'admin') return admin;
+  return true;
+}
+
+function getStoredView(uid?: string | null): AppView {
+  if (!uid || typeof window === 'undefined') return 'dashboard';
+
+  const saved = window.localStorage.getItem(`${VIEW_STORAGE_PREFIX}${uid}`) as AppView | null;
+  return saved && validViews.includes(saved) ? saved : 'dashboard';
+}
+
+function saveStoredView(uid: string | undefined, view: AppView) {
+  if (!uid || typeof window === 'undefined') return;
+  window.localStorage.setItem(`${VIEW_STORAGE_PREFIX}${uid}`, view);
+}
 
 function handleFirestoreError(
   error: unknown,
@@ -112,7 +146,26 @@ export default function App() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [view, setView] = useState<'dashboard' | 'admin' | 'superadmin'>('dashboard');
+  const [view, setViewState] = useState<AppView>('dashboard');
+
+
+  const navigateView = (nextView: AppView) => {
+    if (!canOpenView(nextView, profile)) {
+      nextView = 'dashboard';
+    }
+
+    setViewState(nextView);
+    saveStoredView(user?.uid || profile?.uid, nextView);
+  };
+
+  useEffect(() => {
+    if (!profile || !user) return;
+
+    const savedView = getStoredView(user.uid);
+    const safeView = canOpenView(savedView, profile) ? savedView : 'dashboard';
+    setViewState(safeView);
+    saveStoredView(user.uid, safeView);
+  }, [profile?.uid, profile?.role, profile?.email, user?.uid]);
 
   useEffect(() => {
     let isMounted = true;
@@ -127,7 +180,9 @@ export default function App() {
             ? 'sectionAdmin'
             : 'student';
 
-      const sectionIds = existing?.sectionIds || [];
+      const existingSectionIds = existing?.sectionIds || [];
+      const singleSectionId = existing?.activeSectionId || existingSectionIds[0] || '';
+      const sectionIds = singleSectionId ? [singleSectionId] : [];
 
       return {
         uid: firebaseUser.uid,
@@ -136,7 +191,7 @@ export default function App() {
         email,
         role: role as UserProfile['role'],
         sectionIds,
-        activeSectionId: existing?.activeSectionId || sectionIds[0] || '',
+        activeSectionId: singleSectionId,
         photoURL: existing?.photoURL || firebaseUser.photoURL || undefined,
         disabled: existing?.disabled,
         createdAt: existing?.createdAt || new Date().toISOString(),
@@ -440,9 +495,19 @@ export default function App() {
               <SectionSwitcher
                 profile={profile}
                 onSectionChange={(sectionId) =>
-                  setProfile((prev) => (prev ? { ...prev, activeSectionId: sectionId } : prev))
+                  setProfile((prev) => (prev ? { ...prev, activeSectionId: sectionId, sectionIds: sectionId ? [sectionId] : [] } : prev))
                 }
               />
+
+              <a
+                href="https://wa.me/8801778332688"
+                target="_blank"
+                rel="noreferrer"
+                className="w-9 h-9 flex items-center justify-center text-neutral-400 dark:text-neutral-500 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded-xl transition-all"
+                title="Contact Us on WhatsApp"
+              >
+                <MessageCircle className="w-4 h-4" />
+              </a>
 
               <ThemeToggle />
 
@@ -479,7 +544,7 @@ export default function App() {
           {isAdmin && (
             <div className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-800 p-1 rounded-2xl transition-colors overflow-x-auto scrollbar-hide w-full sm:w-auto sm:flex-none">
               <button
-                onClick={() => setView('dashboard')}
+                onClick={() => navigateView('dashboard')}
                 className={`flex-1 sm:flex-none px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 rounded-xl text-[9px] sm:text-[10px] md:text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap shrink-0 ${
                   view === 'dashboard'
                     ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm'
@@ -491,7 +556,7 @@ export default function App() {
               </button>
 
               <button
-                onClick={() => setView('admin')}
+                onClick={() => navigateView('admin')}
                 className={`flex-1 sm:flex-none px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 rounded-xl text-[9px] sm:text-[10px] md:text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap shrink-0 ${
                   view === 'admin'
                     ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm'
@@ -503,7 +568,7 @@ export default function App() {
 
               {isSuperAdmin && (
                 <button
-                  onClick={() => setView('superadmin')}
+                  onClick={() => navigateView('superadmin')}
                   className={`flex-1 sm:flex-none px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 rounded-xl text-[9px] sm:text-[10px] md:text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap shrink-0 ${
                     view === 'superadmin'
                       ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm'
@@ -520,9 +585,20 @@ export default function App() {
             <SectionSwitcher
               profile={profile}
               onSectionChange={(sectionId) =>
-                setProfile((prev) => (prev ? { ...prev, activeSectionId: sectionId } : prev))
+                setProfile((prev) => (prev ? { ...prev, activeSectionId: sectionId, sectionIds: sectionId ? [sectionId] : [] } : prev))
               }
             />
+
+            <a
+              href="https://wa.me/8801778332688"
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 px-3 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest text-neutral-500 dark:text-neutral-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:border-emerald-200 dark:hover:border-emerald-900 transition-all shadow-sm"
+              title="Contact Us on WhatsApp"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span className="hidden lg:inline">Contact Us</span>
+            </a>
 
             <ThemeToggle />
 
@@ -597,9 +673,9 @@ export default function App() {
                     prev
                       ? {
                           ...prev,
-                          role: prev.role === 'sectionAdmin' ? 'sectionAdmin' : 'student',
+                          role: isSuperAdminEmail(prev.email) ? 'superAdmin' : 'student',
                           activeSectionId: sectionId,
-                          sectionIds: Array.from(new Set([...(prev.sectionIds || []), sectionId])),
+                          sectionIds: sectionId ? [sectionId] : [],
                         }
                       : prev
                   )

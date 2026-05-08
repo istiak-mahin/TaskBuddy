@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { auth, db } from '../firebase';
 import { doc, getDoc, writeBatch } from 'firebase/firestore';
 import { UserProfile } from '../types';
-import { isSuperAdminEmail } from '../services/sectionService';
+import { changeOwnSectionWithJoinCode, isSuperAdminEmail } from '../services/sectionService';
 import {
   X,
   Camera,
@@ -13,9 +13,10 @@ import {
   Trash2,
   AlertCircle,
   CheckCircle2,
+  KeyRound,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { compressImage, generateThumbnail } from '../lib/imageUtils';
+import { generateSmallImageDataUrl } from '../lib/imageUtils';
 
 interface ProfileModalProps {
   profile: UserProfile;
@@ -43,6 +44,7 @@ export default function ProfileModal({
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [sectionKey, setSectionKey] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -67,8 +69,13 @@ export default function ProfileModal({
       return;
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      setError('Image is too large. Max size is 5MB.');
+    if (file.size > 18 * 1024 * 1024) {
+      setError('Image is too large. Max size is 18MB. Please choose a smaller JPG or PNG.');
+      return;
+    }
+
+    if (file.type === 'image/heic' || file.type === 'image/heif' || /\.(heic|heif)$/i.test(file.name)) {
+      setError('HEIC photos are not supported. Please use JPG or PNG.');
       return;
     }
 
@@ -133,25 +140,13 @@ export default function ProfileModal({
     }
 
     try {
-      setUploadProgress(5);
-
-      const compressed = await compressImage(file, 512, 0.82);
-      setUploadProgress(35);
-
-      const imageForBase64 =
-        compressed instanceof File
-          ? compressed
-          : new File([compressed], file.name.replace(/\.[^/.]+$/, '') + '.jpg', {
-              type: 'image/jpeg',
-            });
-
-      const base64 = await generateThumbnail(imageForBase64, 256, 0.65);
-
+      setUploadProgress(10);
+      const base64 = await generateSmallImageDataUrl(file, 256, 0.65, 750_000);
       setUploadProgress(100);
       return base64;
-    } catch (err) {
+    } catch (err: any) {
       console.error('Image convert failed:', err);
-      throw new Error('Photo processing failed. Please try another image.');
+      throw new Error(err?.message || 'Photo processing failed. Please try another image.');
     }
   };
 
@@ -207,16 +202,33 @@ export default function ProfileModal({
         }
       }
 
-      batch.update(doc(db, 'users', profile.uid), updates);
+      let sectionChange: Partial<UserProfile> = {};
+      const nextSectionKey = sectionKey.trim();
+
+      if (nextSectionKey) {
+        const result = await changeOwnSectionWithJoinCode(
+          { ...profile, ...updates },
+          nextSectionKey
+        );
+        sectionChange = {
+          role: result.role,
+          sectionIds: [result.sectionId],
+          activeSectionId: result.sectionId,
+          joinCodeUsed: result.joinCodeUsed,
+        };
+      }
+
+      batch.update(doc(db, 'users', profile.uid), { ...updates, ...sectionChange });
       await batch.commit();
 
-      onUpdate(updates);
+      onUpdate({ ...updates, ...sectionChange });
       setFormData((prev) => ({
         ...prev,
         photoURL: currentPhotoURL,
       }));
 
-      setSuccess('Profile successfully updated.');
+      setSuccess(sectionKey.trim() ? 'Profile and section updated successfully.' : 'Profile successfully updated.');
+      setSectionKey('');
       setSelectedFile(null);
 
       if (previewURL) {
@@ -252,7 +264,7 @@ export default function ProfileModal({
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 16, scale: 0.98 }}
         transition={{ duration: 0.2 }}
-        className="relative w-full max-w-lg rounded-3xl border border-neutral-200 bg-white p-6 shadow-2xl dark:border-neutral-800 dark:bg-neutral-900"
+        className="relative w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-3xl border border-neutral-200 bg-white p-6 shadow-2xl dark:border-neutral-800 dark:bg-neutral-900 custom-scrollbar"
       >
         <button
           type="button"
@@ -273,10 +285,10 @@ export default function ProfileModal({
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div className="flex flex-col items-center gap-4">
             <div className="relative">
-              <div className="flex h-28 w-28 items-center justify-center overflow-hidden rounded-full border-4 border-neutral-200 bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-800">
+              <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-4 border-neutral-200 bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-800">
                 {currentImage ? (
                   <img
                     src={currentImage}
@@ -383,6 +395,26 @@ export default function ProfileModal({
             </div>
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
               Use only letters, numbers, or underscore. Do not type @.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+              Change Section
+            </label>
+            <div className="relative">
+              <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+              <input
+                type="text"
+                value={sectionKey}
+                onChange={(e) => setSectionKey(e.target.value.toUpperCase())}
+                className="w-full rounded-xl border border-neutral-200 bg-neutral-50 py-3 pl-10 pr-4 font-mono text-neutral-900 outline-none transition-all focus:ring-2 focus:ring-neutral-900/10 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-50 dark:focus:ring-neutral-50/10"
+                placeholder="New section enrollment key"
+                disabled={saving}
+              />
+            </div>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              You can stay in only one section. A valid key moves you to the new section and removes previous section access.
             </p>
           </div>
 

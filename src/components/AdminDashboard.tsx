@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { auth, db } from '../firebase';
 import { collection, query, onSnapshot, addDoc, deleteDoc, doc, updateDoc, serverTimestamp, getDocs } from 'firebase/firestore';
-import { UserProfile, Course, Announcement, Assignment } from '../types';
-import { getActiveSectionId, getSectionCollection, getSectionDoc } from '../services/sectionService';
-import { Plus, Trash2, Users, Megaphone, BookOpen, LayoutGrid, X, Loader2, Settings2, Edit2, Check, AlertCircle, UserCircle2, CheckCircle2, Clock, ArrowLeft, Search, History, ShieldCheck } from 'lucide-react';
+import { UserProfile, Course, Announcement, Assignment, Section } from '../types';
+import { getActiveSectionId, getSectionCollection, getSectionDoc, updateSectionEnrollmentKey } from '../services/sectionService';
+import { Plus, Trash2, Users, Megaphone, BookOpen, LayoutGrid, X, Loader2, Settings2, Edit2, Check, AlertCircle, UserCircle2, CheckCircle2, Clock, ArrowLeft, Search, History, ShieldCheck, Save } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import StudentDashboard from './StudentDashboard';
 import ProfileModal from './ProfileModal';
@@ -122,7 +122,7 @@ export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminD
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [allAssignments, setAllAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'courses' | 'announcements' | 'students' | 'assignments' | 'history' | 'all_users'>('courses');
+  const [activeTab, setActiveTab] = useState<'courses' | 'announcements' | 'students' | 'assignments' | 'history' | 'settings' | 'all_users'>('courses');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   
   const [newCourse, setNewCourse] = useState('');
@@ -139,6 +139,10 @@ export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminD
   const [showConfirmUpdate, setShowConfirmUpdate] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeSection, setActiveSection] = useState<Section | null>(null);
+  const [sectionJoinCode, setSectionJoinCode] = useState('');
+  const [settingsMessage, setSettingsMessage] = useState('');
+  const [settingsError, setSettingsError] = useState('');
 
   const [editingStudentProfile, setEditingStudentProfile] = useState<UserProfile | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -202,8 +206,41 @@ export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminD
     return 'low';
   };
 
+  const handleUpdateSectionKey = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!activeSection || isProcessing === 'section-key') return;
+
+    setIsProcessing('section-key');
+    setSettingsMessage('');
+    setSettingsError('');
+
+    try {
+      const nextCode = await updateSectionEnrollmentKey(
+        activeSection,
+        sectionJoinCode,
+        profile.uid
+      );
+      setActiveSection((prev) => (prev ? { ...prev, joinCode: nextCode } : prev));
+      setSectionJoinCode(nextCode);
+      setSettingsMessage(nextCode ? 'Section enrollment key updated successfully.' : 'Section enrollment key removed.');
+    } catch (error: any) {
+      console.error('Update section key failed:', error);
+      setSettingsError(error?.message || 'Could not update section enrollment key.');
+    } finally {
+      setIsProcessing(null);
+    }
+  };
+
   useEffect(() => {
     setLoading(true);
+    const unsubSection = onSnapshot(doc(db, 'sections', activeSectionId), (snapshot) => {
+      if (snapshot.exists()) {
+        const section = { id: snapshot.id, ...snapshot.data() } as Section;
+        setActiveSection(section);
+        setSectionJoinCode(section.joinCode || '');
+      }
+    });
+
     const unsubCourses = onSnapshot(getSectionCollection(profile, 'courses'), (snapshot) => {
       setCourses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Course)));
     });
@@ -223,6 +260,7 @@ export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminD
 
     setLoading(false);
     return () => {
+      unsubSection();
       unsubCourses();
       unsubAnnouncements();
       unsubUsers();
@@ -417,6 +455,7 @@ export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminD
             { id: 'assignments', label: 'Assignments', icon: LayoutGrid },
             { id: 'history', label: 'History', icon: Clock },
             { id: 'students', label: 'Students', icon: Users },
+            { id: 'settings', label: 'Settings', icon: Settings2 },
             ...(isSuperAdmin ? [{ id: 'all_users', label: 'All Users', icon: ShieldCheck }] : []),
           ].map((tab) => (
             <button 
@@ -1187,6 +1226,67 @@ export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminD
                 </div>
               </div>
             )}
+          </motion.div>
+        )}
+
+        {activeTab === 'settings' && (
+          <motion.div
+            key="settings"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+          >
+            <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-8 h-8 bg-blue-50 dark:bg-blue-900/20 rounded-lg flex items-center justify-center text-blue-500">
+                  <Settings2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">Section Enrollment Key</h3>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">Change the key students use to enter this section.</p>
+                </div>
+              </div>
+
+              {settingsError && (
+                <div className="mb-4 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-xs font-bold text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300">
+                  {settingsError}
+                </div>
+              )}
+
+              {settingsMessage && (
+                <div className="mb-4 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-300">
+                  {settingsMessage}
+                </div>
+              )}
+
+              <form onSubmit={handleUpdateSectionKey} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider ml-1">Active Section</label>
+                  <div className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-bold text-neutral-900 dark:text-neutral-50">
+                    {activeSection?.name || 'Current Section'}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider ml-1">Enrollment Key</label>
+                  <input
+                    value={sectionJoinCode}
+                    onChange={(event) => setSectionJoinCode(event.target.value.toUpperCase())}
+                    placeholder="Example: CSE63A2026"
+                    className="w-full px-4 py-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-black tracking-[0.14em] uppercase text-neutral-900 dark:text-neutral-50 focus:outline-none focus:ring-2 focus:ring-neutral-900/5 transition-all"
+                  />
+                </div>
+
+                <button
+                  disabled={isProcessing === 'section-key'}
+                  className="w-full bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-3 rounded-xl text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isProcessing === 'section-key' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Save Enrollment Key
+                </button>
+              </form>
+            </div>
           </motion.div>
         )}
 

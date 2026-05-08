@@ -328,18 +328,9 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
         sectionId: activeSectionId
       });
 
-      // 2. Send Email Reminder via Server
-      try {
-        await fetch('/api/reminders/email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: studentId, title, message, sectionId: activeSectionId })
-        });
-      } catch (e) {
-        console.error('Failed to trigger email reminder:', e);
-      }
-
-      alert('Reminder sent to student (In-app and Email)!');
+      // Email reminders are handled by the free GitHub Actions scheduled job.
+      // GitHub Pages cannot safely run a backend endpoint with the Resend secret.
+      alert('In-app reminder sent. Email reminders are handled automatically by the scheduled reminder job.');
     } catch (error) {
       console.error('Error sending reminder:', error);
     }
