@@ -6,6 +6,7 @@ import { getActiveSectionId, getSectionCollection, getSectionDoc } from '../serv
 import { Plus, Trash2, CheckCircle2, AlertCircle, Clock, BookOpen, BarChart3, X, Megaphone, Trophy, Target, Bell, Search, Filter, History, Star, Loader2, Send, Edit2, FileText, ClipboardList } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import SectionResourceManager from './SectionResourceManager';
+import { enablePushNotifications, getNotificationPermissionStatus, isPushNotificationSupported, syncPushTokenIfAlreadyGranted } from '../services/pushNotificationService';
 
 interface StudentDashboardProps {
   profile: UserProfile;
@@ -147,6 +148,10 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
 
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [pushStatus, setPushStatus] = useState<NotificationPermission | 'unsupported'>('unsupported');
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushSaving, setPushSaving] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [docToDelete, setDocToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -165,12 +170,6 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       setCurrentTime(new Date());
     }, 10000);
     return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
   }, []);
 
   useEffect(() => {
@@ -231,6 +230,54 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       unsubscribeNotifs();
     };
   }, [profile.uid, isAdmin, studentId, activeSectionId]);
+
+
+  const refreshPushStatus = async () => {
+    try {
+      const supported = await isPushNotificationSupported();
+      setPushSupported(supported);
+      setPushStatus(supported ? getNotificationPermissionStatus() : 'unsupported');
+      setPushError(null);
+
+      if (supported && getNotificationPermissionStatus() === 'granted') {
+        await syncPushTokenIfAlreadyGranted();
+        setPushStatus(getNotificationPermissionStatus());
+      }
+    } catch (err: any) {
+      console.warn('Push notification status check failed:', err);
+      setPushError(err?.message || 'Could not check notification status.');
+    }
+  };
+
+  const toggleNotificationPanel = async () => {
+    const nextValue = !showNotifications;
+    setShowNotifications(nextValue);
+
+    if (nextValue) {
+      await refreshPushStatus();
+    }
+  };
+
+  const handleEnablePushNotifications = async () => {
+    setPushSaving(true);
+    setPushError(null);
+
+    try {
+      await enablePushNotifications();
+      setPushStatus(getNotificationPermissionStatus());
+      setPushSupported(true);
+    } catch (err: any) {
+      console.error('Push notification setup failed:', err);
+      setPushStatus(getNotificationPermissionStatus());
+      setPushError(err?.message || 'Could not enable phone notifications.');
+    } finally {
+      setPushSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshPushStatus();
+  }, [profile.uid]);
 
   const calculateTimeProgress = (assignment: Assignment) => {
     if (isTaskDone(assignment)) return 100;
@@ -497,7 +544,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
           <div className="w-px h-3 bg-neutral-200 dark:bg-neutral-800 mx-1" />
           
           <button 
-            onClick={() => setShowNotifications(!showNotifications)}
+            onClick={toggleNotificationPanel}
             className="relative p-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800 rounded-lg transition-colors group"
           >
             <Bell className={`w-4 h-4 transition-colors ${notifications.some(n => !n.read) ? 'text-blue-600' : 'text-neutral-500 dark:text-neutral-400 group-hover:text-neutral-900 dark:group-hover:text-neutral-100'}`} />
@@ -538,6 +585,43 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                       </button>
                     </div>
                   </div>
+
+                  {pushSupported && pushStatus !== 'granted' && (
+                    <div className="border-b border-neutral-100 bg-blue-50/70 p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white">
+                          <Bell className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold text-neutral-900">Turn on phone notifications</p>
+                          <p className="mt-1 text-[11px] font-medium leading-relaxed text-neutral-500">
+                            Get deadline reminders on your phone screen and inside TaskBuddy.
+                          </p>
+                          {pushError && (
+                            <p className="mt-2 text-[11px] font-semibold text-red-600">{pushError}</p>
+                          )}
+                          <button
+                            type="button"
+                            onClick={handleEnablePushNotifications}
+                            disabled={pushSaving || pushStatus === 'denied'}
+                            className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-[11px] font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {pushSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                            {pushStatus === 'denied' ? 'Blocked in browser settings' : 'Enable notifications'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {!pushSupported && (
+                    <div className="border-b border-neutral-100 bg-amber-50 p-4">
+                      <p className="text-[11px] font-semibold text-amber-700">
+                        Phone notifications are not supported on this browser. In-app notifications will still work.
+                      </p>
+                    </div>
+                  )}
+
                   <div className="max-h-[380px] overflow-y-auto custom-scrollbar">
                     {notifications.length > 0 ? (
                       notifications.map((notif) => (

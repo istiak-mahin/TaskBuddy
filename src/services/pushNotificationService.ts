@@ -3,6 +3,12 @@ import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { auth, app, db } from '../firebase';
 
 const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY || '';
+const BASE_URL = import.meta.env.BASE_URL || '/TaskBuddy/';
+
+function withBase(path: string) {
+  const base = BASE_URL.endsWith('/') ? BASE_URL : `${BASE_URL}/`;
+  return `${base}${path.replace(/^\//, '')}`;
+}
 
 export async function isPushNotificationSupported() {
   return (
@@ -21,7 +27,7 @@ export function getNotificationPermissionStatus(): NotificationPermission | 'uns
   return Notification.permission;
 }
 
-export async function enablePushNotifications() {
+async function saveCurrentFcmToken() {
   const user = auth.currentUser;
 
   if (!user) {
@@ -38,13 +44,7 @@ export async function enablePushNotifications() {
     throw new Error('Push notifications are not supported on this browser/device.');
   }
 
-  const permission = await Notification.requestPermission();
-
-  if (permission !== 'granted') {
-    throw new Error('Notification permission was not granted.');
-  }
-
-  const registration = await navigator.serviceWorker.register('/TaskBuddy/firebase-messaging-sw.js');
+  const registration = await navigator.serviceWorker.register(withBase('firebase-messaging-sw.js'));
   await navigator.serviceWorker.ready;
 
   const messaging = getMessaging(app);
@@ -65,6 +65,7 @@ export async function enablePushNotifications() {
       token,
       platform: 'web',
       userAgent: navigator.userAgent,
+      permission: Notification.permission,
       createdAt: serverTimestamp(),
       lastSeenAt: serverTimestamp(),
       active: true,
@@ -73,6 +74,32 @@ export async function enablePushNotifications() {
   );
 
   return token;
+}
+
+export async function enablePushNotifications() {
+  if (getNotificationPermissionStatus() === 'unsupported') {
+    throw new Error('Push notifications are not supported on this browser/device.');
+  }
+
+  let permission = Notification.permission;
+
+  if (permission === 'default') {
+    permission = await Notification.requestPermission();
+  }
+
+  if (permission !== 'granted') {
+    throw new Error('Notification permission was not granted.');
+  }
+
+  return saveCurrentFcmToken();
+}
+
+export async function syncPushTokenIfAlreadyGranted() {
+  if (getNotificationPermissionStatus() !== 'granted') {
+    return null;
+  }
+
+  return saveCurrentFcmToken();
 }
 
 export async function setupForegroundPushListener(onPush?: (payload: any) => void) {
@@ -95,10 +122,10 @@ export async function setupForegroundPushListener(onPush?: (payload: any) => voi
     if (Notification.permission === 'granted') {
       new Notification(title, {
         body,
-        icon: '/TaskBuddy/pwa-192x192.png',
-        badge: '/TaskBuddy/pwa-192x192.png',
+        icon: withBase('pwa-192x192.png'),
+        badge: withBase('pwa-192x192.png'),
         data: {
-          url: payload.data?.url || '/TaskBuddy/',
+          url: payload.data?.url || BASE_URL,
         },
       });
     }
