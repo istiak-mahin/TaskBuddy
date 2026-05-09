@@ -3,15 +3,15 @@ importScripts('https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js
 importScripts('https://www.gstatic.com/firebasejs/10.12.5/firebase-messaging-compat.js');
 
 const firebaseConfig = {
-  "apiKey": "",
-  "authDomain": "",
-  "projectId": "",
-  "messagingSenderId": "",
-  "appId": "",
-  "measurementId": ""
+  "apiKey": "AIzaSyD8MH8B0Hs3kwt5Q-lead5gcq4O0nMXRx8",
+  "authDomain": "ai-studio-applet-webapp-a24f0.firebaseapp.com",
+  "projectId": "ai-studio-applet-webapp-a24f0",
+  "messagingSenderId": "313498089214",
+  "appId": "1:313498089214:web:b7f678394e6f9d3bbbd7af",
+  "measurementId": "G-T2W4NLV9Q8"
 };
 
-if (false) {
+if (true) {
   firebase.initializeApp(firebaseConfig);
   const messaging = firebase.messaging();
 

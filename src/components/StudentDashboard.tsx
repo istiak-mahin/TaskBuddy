@@ -152,6 +152,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
   const [pushSupported, setPushSupported] = useState(false);
   const [pushSaving, setPushSaving] = useState(false);
   const [pushError, setPushError] = useState<string | null>(null);
+  const [pushSaved, setPushSaved] = useState(false);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [docToDelete, setDocToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -241,11 +242,14 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
 
       if (supported && getNotificationPermissionStatus() === 'granted') {
         await syncPushTokenIfAlreadyGranted();
+        setPushSaved(true);
         setPushStatus(getNotificationPermissionStatus());
       }
     } catch (err: any) {
       console.warn('Push notification status check failed:', err);
-      setPushError(err?.message || 'Could not check notification status.');
+      setPushSaved(false);
+      setPushStatus(getNotificationPermissionStatus());
+      setPushError(err?.message || 'Could not save this device for phone notifications. Tap Fix phone notifications to try again.');
     }
   };
 
@@ -264,11 +268,13 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
 
     try {
       await enablePushNotifications();
+      setPushSaved(true);
       setPushStatus(getNotificationPermissionStatus());
       setPushSupported(true);
     } catch (err: any) {
       console.error('Push notification setup failed:', err);
       setPushStatus(getNotificationPermissionStatus());
+      setPushSaved(false);
       setPushError(err?.message || 'Could not enable phone notifications.');
     } finally {
       setPushSaving(false);
@@ -586,16 +592,20 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                     </div>
                   </div>
 
-                  {pushSupported && pushStatus !== 'granted' && (
+                  {pushSupported && (pushStatus !== 'granted' || pushError || (pushStatus === 'granted' && !pushSaved)) && (
                     <div className="border-b border-neutral-100 bg-blue-50/70 p-4">
                       <div className="flex items-start gap-3">
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white">
                           <Bell className="h-4 w-4" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-xs font-bold text-neutral-900">Turn on phone notifications</p>
+                          <p className="text-xs font-bold text-neutral-900">
+                            {pushStatus === 'granted' ? 'Fix phone notifications' : 'Turn on phone notifications'}
+                          </p>
                           <p className="mt-1 text-[11px] font-medium leading-relaxed text-neutral-500">
-                            Get deadline reminders on your phone screen and inside TaskBuddy.
+                            {pushStatus === 'granted'
+                              ? 'Permission is already allowed, but this device is not saved for deadline push notifications yet.'
+                              : 'Get deadline reminders on your phone screen and inside TaskBuddy.'}
                           </p>
                           {pushError && (
                             <p className="mt-2 text-[11px] font-semibold text-red-600">{pushError}</p>
@@ -607,7 +617,11 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                             className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-[11px] font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {pushSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                            {pushStatus === 'denied' ? 'Blocked in browser settings' : 'Enable notifications'}
+                            {pushStatus === 'denied'
+                              ? 'Blocked in browser settings'
+                              : pushStatus === 'granted'
+                                ? 'Save this device again'
+                                : 'Enable notifications'}
                           </button>
                         </div>
                       </div>
@@ -618,6 +632,14 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                     <div className="border-b border-neutral-100 bg-amber-50 p-4">
                       <p className="text-[11px] font-semibold text-amber-700">
                         Phone notifications are not supported on this browser. In-app notifications will still work.
+                      </p>
+                    </div>
+                  )}
+
+                  {pushSupported && pushStatus === 'granted' && pushSaved && (
+                    <div className="border-b border-neutral-100 bg-emerald-50 p-3">
+                      <p className="text-[11px] font-semibold text-emerald-700">
+                        Phone notifications are enabled on this device.
                       </p>
                     </div>
                   )}

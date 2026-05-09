@@ -163,6 +163,7 @@ async function sendPushToUser(db: FirebaseFirestore.Firestore, userId: string, p
     .get();
 
   if (tokensSnapshot.empty) {
+    console.warn(`No active push tokens found for user ${userId}. Expected Firestore path: users/${userId}/notificationTokens with active=true.`);
     return { sent: 0, failed: 0 };
   }
 

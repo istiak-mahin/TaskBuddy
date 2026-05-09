@@ -1,13 +1,62 @@
 import { getMessaging, getToken, isSupported, onMessage } from 'firebase/messaging';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import type { User } from 'firebase/auth';
 import { auth, app, db } from '../firebase';
 
-const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY || '';
+const FALLBACK_VAPID_KEY =
+  'BGjT6VtlDKhZx7ebn5Xz7ZVOaO7tsA_Xxw5EEknfAkzebJdn1C_bjX0x9HPbl5Zp3EbPU_44b_P5G6TmoxcUTPQ';
+
+const VAPID_KEY =
+  import.meta.env.VITE_FIREBASE_VAPID_KEY ||
+  FALLBACK_VAPID_KEY;
 const BASE_URL = import.meta.env.BASE_URL || '/TaskBuddy/';
 
 function withBase(path: string) {
   const base = BASE_URL.endsWith('/') ? BASE_URL : `${BASE_URL}/`;
   return `${base}${path.replace(/^\//, '')}`;
+}
+
+function getFirebaseErrorMessage(err: any) {
+  const code = err?.code || '';
+  const message = err?.message || String(err);
+
+  if (code === 'permission-denied') {
+    return 'Firestore permission denied. Deploy the latest firestore.rules and make sure users/{uid}/notificationTokens write is allowed.';
+  }
+
+  if (code === 'messaging/permission-blocked') {
+    return 'Notification permission is blocked. Allow notifications from browser/site settings.';
+  }
+
+  if (code === 'messaging/unsupported-browser') {
+    return 'Push notifications are not supported on this browser/device.';
+  }
+
+  if (code === 'messaging/token-subscribe-failed' || code === 'messaging/token-update-failed') {
+    return 'FCM token creation failed. Check VITE_FIREBASE_VAPID_KEY and Firebase Cloud Messaging settings.';
+  }
+
+  return message;
+}
+
+function waitForCurrentUser(timeoutMs = 4000): Promise<User> {
+  if (auth.currentUser) {
+    return Promise.resolve(auth.currentUser);
+  }
+
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      unsubscribe();
+      reject(new Error('Login session is not ready yet. Please refresh after login and try again.'));
+    }, timeoutMs);
+
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (!user) return;
+      window.clearTimeout(timer);
+      unsubscribe();
+      resolve(user);
+    });
+  });
 }
 
 export async function isPushNotificationSupported() {
@@ -28,52 +77,69 @@ export function getNotificationPermissionStatus(): NotificationPermission | 'uns
 }
 
 async function saveCurrentFcmToken() {
-  const user = auth.currentUser;
+  try {
+    const user = await waitForCurrentUser();
 
-  if (!user) {
-    throw new Error('Please log in before enabling notifications.');
+    if (!VAPID_KEY || VAPID_KEY.includes('your_')) {
+      throw new Error('Firebase VAPID key is missing. Add VITE_FIREBASE_VAPID_KEY in GitHub Secrets and redeploy.');
+    }
+
+    const supported = await isPushNotificationSupported();
+
+    if (!supported) {
+      throw new Error('Push notifications are not supported on this browser/device.');
+    }
+
+    if (Notification.permission !== 'granted') {
+      throw new Error('Notification permission is not granted.');
+    }
+
+    await user.getIdToken(true);
+
+    const registration = await navigator.serviceWorker.register(withBase('firebase-messaging-sw.js'), {
+      scope: BASE_URL,
+      updateViaCache: 'none',
+    });
+
+    await registration.update().catch(() => undefined);
+    await navigator.serviceWorker.ready;
+
+    const messaging = getMessaging(app);
+    const token = await getToken(messaging, {
+      vapidKey: VAPID_KEY,
+      serviceWorkerRegistration: registration,
+    });
+
+    if (!token) {
+      throw new Error('Could not create a push notification token.');
+    }
+
+    const tokenId = token.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+    const tokenPath = `users/${user.uid}/notificationTokens/${tokenId}`;
+
+    await setDoc(
+      doc(db, 'users', user.uid, 'notificationTokens', tokenId),
+      {
+        token,
+        platform: 'web',
+        active: true,
+        permission: Notification.permission,
+        uid: user.uid,
+        email: user.email || null,
+        userAgent: navigator.userAgent,
+        createdAt: serverTimestamp(),
+        lastSeenAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    console.info('[TaskBuddy Push] FCM token saved:', tokenPath);
+    return { token, tokenPath };
+  } catch (err: any) {
+    const friendlyMessage = getFirebaseErrorMessage(err);
+    console.error('[TaskBuddy Push] Token setup failed:', err);
+    throw new Error(friendlyMessage);
   }
-
-  if (!VAPID_KEY) {
-    throw new Error('Firebase VAPID key is missing. Add VITE_FIREBASE_VAPID_KEY to your environment.');
-  }
-
-  const supported = await isPushNotificationSupported();
-
-  if (!supported) {
-    throw new Error('Push notifications are not supported on this browser/device.');
-  }
-
-  const registration = await navigator.serviceWorker.register(withBase('firebase-messaging-sw.js'));
-  await navigator.serviceWorker.ready;
-
-  const messaging = getMessaging(app);
-  const token = await getToken(messaging, {
-    vapidKey: VAPID_KEY,
-    serviceWorkerRegistration: registration,
-  });
-
-  if (!token) {
-    throw new Error('Could not create a push notification token.');
-  }
-
-  const tokenId = token.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
-
-  await setDoc(
-    doc(db, 'users', user.uid, 'notificationTokens', tokenId),
-    {
-      token,
-      platform: 'web',
-      userAgent: navigator.userAgent,
-      permission: Notification.permission,
-      createdAt: serverTimestamp(),
-      lastSeenAt: serverTimestamp(),
-      active: true,
-    },
-    { merge: true }
-  );
-
-  return token;
 }
 
 export async function enablePushNotifications() {
