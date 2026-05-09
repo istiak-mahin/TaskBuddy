@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection,
   doc,
@@ -46,7 +46,9 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
   const [saving, setSaving] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [userEditForm, setUserEditForm] = useState({ sectionName: '', department: '', role: 'student' as UserRole });
-  const [activeView, setActiveView] = useState<'overview' | 'sections' | 'users' | 'notes' | 'previousQuestions'>('overview');
+  const [activeView, setActiveView] = useState<'overview' | 'sections' | 'sectionCreate' | 'sectionList' | 'users' | 'userChange' | 'userList' | 'notes' | 'previousQuestions'>('overview');
+  const activeViewRef = useRef<typeof activeView>('overview');
+  const superHistoryPushedRef = useRef(false);
   const [resourceCounts, setResourceCounts] = useState({ notes: 0, previousQuestions: 0 });
 
   const getDepartmentLabel = (section?: Pick<Section, 'department'> | null) =>
@@ -101,6 +103,56 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+
+  useEffect(() => {
+    activeViewRef.current = activeView;
+  }, [activeView]);
+
+  useEffect(() => {
+    const handleBrowserBack = () => {
+      if (activeViewRef.current !== 'overview') {
+        superHistoryPushedRef.current = false;
+        setActiveView('overview');
+      }
+    };
+
+    window.addEventListener('popstate', handleBrowserBack);
+    return () => window.removeEventListener('popstate', handleBrowserBack);
+  }, []);
+
+  const openSuperPage = (view: typeof activeView) => {
+    if (view === 'overview') return;
+
+    const wasOnOverview = activeViewRef.current === 'overview';
+    setActiveView(view);
+
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const targetUrl = `${window.location.pathname}${window.location.search}#super-${view}`;
+
+      if (wasOnOverview) {
+        window.history.pushState({ taskbuddySuperView: view }, '', targetUrl);
+        superHistoryPushedRef.current = true;
+      } else {
+        window.history.replaceState({ taskbuddySuperView: view }, '', targetUrl);
+      }
+    }
+  };
+
+  const closeSuperPage = () => {
+    if (activeViewRef.current === 'overview') return;
+
+    setActiveView('overview');
+    if (typeof window !== 'undefined') {
+      if (superHistoryPushedRef.current && window.history.length > 1) {
+        superHistoryPushedRef.current = false;
+        window.history.back();
+      } else {
+        window.history.replaceState({ taskbuddySuperView: 'overview' }, '', `${window.location.pathname}${window.location.search}`);
+      }
+    }
+  };
 
   const filteredUsers = useMemo(() => {
     const queryText = searchQuery.toLowerCase().trim();
@@ -500,6 +552,7 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
 
 
 
+      {activeView === 'overview' && (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: 'Sections', value: sections.length, icon: Layers, color: 'blue', view: 'sections' as const },
@@ -512,7 +565,7 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.05 }}
-            onClick={() => setActiveView(stat.view)}
+            onClick={() => openSuperPage(stat.view)}
             className="bg-white dark:bg-neutral-900 p-5 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm flex items-center justify-between hover:border-blue-200 dark:hover:border-blue-800 cursor-pointer transition-all text-left"
             role="button"
             tabIndex={0}
@@ -532,12 +585,13 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
           </motion.div>
         ))}
       </div>
+      )}
 
 
 
       {activeView !== 'overview' && (
         <div className="flex items-center justify-between gap-4">
-          <button type="button" onClick={() => setActiveView('overview')} className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-sm font-semibold text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-50 transition-colors">
+          <button type="button" onClick={closeSuperPage} className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-sm font-semibold text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-50 transition-colors">
             <ArrowLeft className="w-4 h-4" /> Back
           </button>
           <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Super Admin Section</p>
@@ -548,6 +602,21 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
       {activeView === 'previousQuestions' && <SectionResourceManager profile={profile} resourceType="previousQuestions" isSuperAdmin sections={sections} />}
 
       {activeView === 'sections' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <button type="button" onClick={() => openSuperPage('sectionCreate')} className="text-left bg-white dark:bg-neutral-900 p-6 rounded-3xl border border-neutral-200 dark:border-neutral-800 shadow-sm hover:border-blue-300 dark:hover:border-blue-800 transition-all">
+            <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-900/20 text-blue-500 flex items-center justify-center mb-5"><Plus className="w-6 h-6" /></div>
+            <h3 className="text-2xl font-black text-neutral-900 dark:text-neutral-50 tracking-tight">Create Section</h3>
+            <p className="mt-2 text-sm font-medium text-neutral-500 dark:text-neutral-400">Add a new section and enrollment key.</p>
+          </button>
+          <button type="button" onClick={() => openSuperPage('sectionList')} className="text-left bg-white dark:bg-neutral-900 p-6 rounded-3xl border border-neutral-200 dark:border-neutral-800 shadow-sm hover:border-blue-300 dark:hover:border-blue-800 transition-all">
+            <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-900/20 text-blue-500 flex items-center justify-center mb-5"><Layers className="w-6 h-6" /></div>
+            <h3 className="text-2xl font-black text-neutral-900 dark:text-neutral-50 tracking-tight">Show All Sections</h3>
+            <p className="mt-2 text-sm font-medium text-neutral-500 dark:text-neutral-400">View, edit, and delete existing sections.</p>
+          </button>
+        </div>
+      )}
+
+      {activeView === 'sectionList' && (
         <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
           <div className="flex items-center gap-3 mb-6"><Layers className="w-5 h-5 text-neutral-400" /><h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">All Sections</h3></div>
           <div className="space-y-3">
@@ -597,6 +666,21 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
       )}
 
       {activeView === 'users' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <button type="button" onClick={() => openSuperPage('userChange')} className="text-left bg-white dark:bg-neutral-900 p-6 rounded-3xl border border-neutral-200 dark:border-neutral-800 shadow-sm hover:border-emerald-300 dark:hover:border-emerald-800 transition-all">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 text-emerald-500 flex items-center justify-center mb-5"><UserPlus className="w-6 h-6" /></div>
+            <h3 className="text-2xl font-black text-neutral-900 dark:text-neutral-50 tracking-tight">Change User Section</h3>
+            <p className="mt-2 text-sm font-medium text-neutral-500 dark:text-neutral-400">Move a user to a new section and role.</p>
+          </button>
+          <button type="button" onClick={() => openSuperPage('userList')} className="text-left bg-white dark:bg-neutral-900 p-6 rounded-3xl border border-neutral-200 dark:border-neutral-800 shadow-sm hover:border-emerald-300 dark:hover:border-emerald-800 transition-all">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 text-emerald-500 flex items-center justify-center mb-5"><Users className="w-6 h-6" /></div>
+            <h3 className="text-2xl font-black text-neutral-900 dark:text-neutral-50 tracking-tight">Show All Users</h3>
+            <p className="mt-2 text-sm font-medium text-neutral-500 dark:text-neutral-400">View all users and edit their section directly.</p>
+          </button>
+        </div>
+      )}
+
+      {activeView === 'userList' && (
         <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
           <div className="flex items-center justify-between gap-4 mb-6">
             <div className="flex items-center gap-3"><Users className="w-5 h-5 text-neutral-400" /><h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">All Users</h3></div>
@@ -620,8 +704,7 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
         </div>
       )}
 
-      {activeView === 'overview' && (<>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      {activeView === 'sectionCreate' && (
         <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-8 h-8 bg-blue-50 dark:bg-blue-900/20 rounded-lg flex items-center justify-center text-blue-500"><Plus className="w-4 h-4" /></div>
@@ -643,7 +726,9 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
             <button disabled={saving} className="w-full bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-3 rounded-xl text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors disabled:opacity-50">{saving ? 'Saving...' : 'Create Section'}</button>
           </form>
         </div>
+      )}
 
+      {activeView === 'userChange' && (
         <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-8 h-8 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg flex items-center justify-center text-emerald-500"><UserPlus className="w-4 h-4" /></div>
@@ -704,16 +789,16 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
             <button disabled={saving} className="w-full bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-3 rounded-xl text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors disabled:opacity-50">{saving ? 'Saving...' : 'Change User Section'}</button>
           </form>
         </div>
-      </div>
+      )}
 
-      <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
-        <div className="text-center py-6">
-          <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">Choose a card above to manage that area.</p>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">Sections and Users are now opened from their own dashboard cards.</p>
+      {activeView === 'overview' && (
+        <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
+          <div className="text-center py-6">
+            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">Choose a card above to manage that area.</p>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">Create section and change user section are now inside their own management pages.</p>
+          </div>
         </div>
-      </div>
-
-      </>)}
+      )}
 
       {selectedUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={closeUserEditor}>

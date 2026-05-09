@@ -6,9 +6,7 @@ import { auth, app, db } from '../firebase';
 const FALLBACK_VAPID_KEY =
   'BGjT6VtlDKhZx7ebn5Xz7ZVOaO7tsA_Xxw5EEknfAkzebJdn1C_bjX0x9HPbl5Zp3EbPU_44b_P5G6TmoxcUTPQ';
 
-const VAPID_KEY =
-  import.meta.env.VITE_FIREBASE_VAPID_KEY ||
-  FALLBACK_VAPID_KEY;
+const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY || FALLBACK_VAPID_KEY;
 const BASE_URL = import.meta.env.BASE_URL || '/TaskBuddy/';
 
 function withBase(path: string) {

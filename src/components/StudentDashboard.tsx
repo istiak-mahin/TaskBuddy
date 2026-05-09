@@ -3,7 +3,7 @@ import { auth, db } from '../firebase';
 import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, orderBy, limit } from 'firebase/firestore';
 import { Assignment, UserProfile, Course, Announcement, AppNotification } from '../types';
 import { getActiveSectionId, getSectionCollection, getSectionDoc } from '../services/sectionService';
-import { Plus, Trash2, CheckCircle2, AlertCircle, Clock, BookOpen, BarChart3, X, Megaphone, Trophy, Target, Bell, Search, Filter, History, Star, Loader2, Send, Edit2, FileText, ClipboardList } from 'lucide-react';
+import { Plus, Trash2, CheckCircle2, AlertCircle, Clock, BookOpen, BarChart3, X, Megaphone, Trophy, Target, Bell, Search, Filter, History, Star, Loader2, Send, Edit2, FileText, ClipboardList, ArrowLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import SectionResourceManager from './SectionResourceManager';
 import { enablePushNotifications, getNotificationPermissionStatus, isPushNotificationSupported, syncPushTokenIfAlreadyGranted } from '../services/pushNotificationService';
@@ -124,7 +124,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
   const [courses, setCourses] = useState<Course[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [resourceCounts, setResourceCounts] = useState({ notes: 0, previousQuestions: 0 });
-  const [activeTab, setActiveTab] = useState<'assignments' | 'announcements' | 'notes' | 'previousQuestions' | 'history'>('assignments');
+  const [activeTab, setActiveTab] = useState<'overview' | 'assignments' | 'announcements' | 'notes' | 'previousQuestions' | 'history'>('overview');
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCourse, setFilterCourse] = useState('all');
@@ -161,9 +161,40 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
   const [currentTime, setCurrentTime] = useState(new Date());
   const activeSectionId = getActiveSectionId(profile);
   const contentRef = useRef<HTMLDivElement>(null);
+  const activeTabRef = useRef<typeof activeTab>('overview');
+  const studentHistoryPushedRef = useRef(false);
 
-  const scrollToContent = () => {
-    contentRef.current?.scrollIntoView({ behavior: 'smooth' });
+  const openStudentPage = (tab: typeof activeTab) => {
+    if (tab === 'overview') return;
+
+    const wasOnOverview = activeTabRef.current === 'overview';
+    setActiveTab(tab);
+
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const targetUrl = `${window.location.pathname}${window.location.search}#student-${tab}`;
+
+      if (wasOnOverview) {
+        window.history.pushState({ taskbuddyStudentTab: tab }, '', targetUrl);
+        studentHistoryPushedRef.current = true;
+      } else {
+        window.history.replaceState({ taskbuddyStudentTab: tab }, '', targetUrl);
+      }
+    }
+  };
+
+  const closeStudentPage = () => {
+    if (activeTabRef.current === 'overview') return;
+
+    setActiveTab('overview');
+    if (typeof window !== 'undefined') {
+      if (studentHistoryPushedRef.current && window.history.length > 1) {
+        studentHistoryPushedRef.current = false;
+        window.history.back();
+      } else {
+        window.history.replaceState({ taskbuddyStudentTab: 'overview' }, '', `${window.location.pathname}${window.location.search}`);
+      }
+    }
   };
 
   useEffect(() => {
@@ -171,6 +202,23 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       setCurrentTime(new Date());
     }, 10000);
     return () => clearInterval(timer);
+  }, []);
+
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    const handleBrowserBack = () => {
+      if (activeTabRef.current !== 'overview') {
+        studentHistoryPushedRef.current = false;
+        setActiveTab('overview');
+      }
+    };
+
+    window.addEventListener('popstate', handleBrowserBack);
+    return () => window.removeEventListener('popstate', handleBrowserBack);
   }, []);
 
   useEffect(() => {
@@ -463,9 +511,8 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       bg: 'bg-blue-50', 
       border: 'border-blue-100',
       action: () => {
-        setActiveTab('assignments');
         setFilterDeadline('active');
-        scrollToContent();
+        openStudentPage('assignments');
       }
     },
     { 
@@ -476,9 +523,8 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       bg: 'bg-emerald-50', 
       border: 'border-emerald-100',
       action: () => {
-        setActiveTab('assignments');
         setFilterDeadline('completed');
-        scrollToContent();
+        openStudentPage('history');
       }
     },
     { 
@@ -489,8 +535,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       bg: 'bg-amber-50', 
       border: 'border-amber-100',
       action: () => {
-        setActiveTab('announcements');
-        scrollToContent();
+        openStudentPage('announcements');
       }
     },
     { 
@@ -501,8 +546,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       bg: 'bg-violet-50', 
       border: 'border-violet-100',
       action: () => {
-        setActiveTab('notes');
-        scrollToContent();
+        openStudentPage('notes');
       }
     },
     { 
@@ -513,8 +557,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       bg: 'bg-cyan-50', 
       border: 'border-cyan-100',
       action: () => {
-        setActiveTab('previousQuestions');
-        scrollToContent();
+        openStudentPage('previousQuestions');
       }
     },
   ];
@@ -684,7 +727,8 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
         </div>
       </motion.div>
 
-      {/* Stats Grid */}
+      {/* Dashboard Options */}
+      {activeTab === 'overview' && (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {stats.map((stat, i) => (
           <motion.div
@@ -705,28 +749,41 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
           </motion.div>
         ))}
       </div>
+      )}
+
+      {activeTab === 'overview' && (
+        <div className="bg-white dark:bg-neutral-900 p-8 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm text-center">
+          <p className="text-sm font-semibold text-neutral-700 dark:text-neutral-200">Choose an option below to open it like a separate app page.</p>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">Active tasks, notices, notes, previous questions, and done history all support the phone back button.</p>
+        </div>
+      )}
+
+      {activeTab !== 'overview' && (
+        <div className="flex items-center justify-between gap-4">
+          <button type="button" onClick={closeStudentPage} className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-sm font-semibold text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-50 transition-colors">
+            <ArrowLeft className="w-4 h-4" /> Back
+          </button>
+          <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Student Page</p>
+        </div>
+      )}
 
       {/* Main Content Area */}
+      {activeTab !== 'overview' && (
       <div 
         ref={contentRef}
         className="bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm overflow-hidden transition-colors"
       >
         {/* Tab Header */}
         <div className="px-4 sm:px-6 py-4 border-b border-neutral-100 dark:border-neutral-800 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-center gap-1 bg-neutral-100/50 dark:bg-neutral-800 p-1 rounded-xl w-full sm:w-fit overflow-x-auto no-scrollbar">
-            {(['assignments', 'announcements', 'notes', 'previousQuestions', 'history'] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`flex-1 sm:flex-none px-3 sm:px-4 py-1.5 rounded-lg text-[11px] sm:text-[12px] font-medium transition-all duration-200 whitespace-nowrap ${
-                  activeTab === tab 
-                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-50 shadow-sm' 
-                    : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'
-                }`}
-              >
-                {tab === 'previousQuestions' ? 'Previous Question' : tab.charAt(0).toUpperCase() + tab.slice(1)}
-              </button>
-            ))}
+          <div>
+            <h3 className="text-lg font-black text-neutral-900 dark:text-neutral-50 tracking-tight">
+              {activeTab === 'assignments' ? (filterDeadline === 'completed' ? 'Completed Tasks' : 'Active Tasks') :
+               activeTab === 'announcements' ? 'Notices' :
+               activeTab === 'previousQuestions' ? 'Previous Question' :
+               activeTab === 'history' ? 'Done History' :
+               activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
+            </h3>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-400 dark:text-neutral-500 mt-1">TaskBuddy student page</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 sm:gap-4">
@@ -1038,6 +1095,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
           </AnimatePresence>
         </div>
       </div>
+      )}
 
       {/* Modals */}
       <AnimatePresence>

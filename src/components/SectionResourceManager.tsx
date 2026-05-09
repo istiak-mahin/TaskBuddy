@@ -155,6 +155,7 @@ export default function SectionResourceManager({ profile, resourceType, isSuperA
   const [error, setError] = useState('');
   const [form, setForm] = useState({ title: '', description: '', sectionId: activeSectionId || '' });
   const [files, setFiles] = useState<File[]>([]);
+  const [selectedResourceKeys, setSelectedResourceKeys] = useState<string[]>([]);
 
   const sectionMap = useMemo(() => {
     const map = new Map<string, Section>();
@@ -176,6 +177,7 @@ export default function SectionResourceManager({ profile, resourceType, isSuperA
           if (!resource.deleteRequested) data.push(resource);
         });
       }
+      setSelectedResourceKeys([]);
       setItems(data.sort((a, b) => {
         const av = a.createdAt?.seconds ? a.createdAt.seconds : 0;
         const bv = b.createdAt?.seconds ? b.createdAt.seconds : 0;
@@ -203,6 +205,7 @@ export default function SectionResourceManager({ profile, resourceType, isSuperA
 
     const q = query(getSectionCollection(profile, collectionName(resourceType)), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(q, (snapshot) => {
+      setSelectedResourceKeys([]);
       setItems(snapshot.docs
         .map((item) => ({ id: item.id, ...item.data() } as SectionResource))
         .filter((item) => !item.deleteRequested));
@@ -241,6 +244,7 @@ export default function SectionResourceManager({ profile, resourceType, isSuperA
   };
 
   const canManage = (item: SectionResource) => isSuperAdmin || item.uploadedBy === profile.uid;
+  const getResourceKey = (item: SectionResource) => `${item.sectionId}__${item.id || ''}`;
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -349,6 +353,67 @@ export default function SectionResourceManager({ profile, resourceType, isSuperA
       .some((value) => String(value).toLowerCase().includes(q));
   });
 
+  const selectableItems = filtered.filter((item) => item.id && canManage(item));
+  const selectableKeys = selectableItems.map(getResourceKey);
+  const selectedItems = selectableItems.filter((item) => selectedResourceKeys.includes(getResourceKey(item)));
+  const allSelectableSelected = selectableKeys.length > 0 && selectableKeys.every((key) => selectedResourceKeys.includes(key));
+
+  const toggleSelectAll = () => {
+    setSelectedResourceKeys((prev) => {
+      if (allSelectableSelected) {
+        return prev.filter((key) => !selectableKeys.includes(key));
+      }
+      return Array.from(new Set([...prev, ...selectableKeys]));
+    });
+  };
+
+  const toggleSelectResource = (item: SectionResource) => {
+    const key = getResourceKey(item);
+    setSelectedResourceKeys((prev) => prev.includes(key) ? prev.filter((itemKey) => itemKey !== key) : [...prev, key]);
+  };
+
+  const handleBulkDelete = async () => {
+    if (!selectedItems.length || saving) return;
+    const confirmed = window.confirm(`Delete ${selectedItems.length} selected ${meta.title.toLowerCase()} item${selectedItems.length > 1 ? 's' : ''}? Cloudinary cleanup will run from GitHub Actions.`);
+    if (!confirmed) return;
+
+    setSaving(true);
+    setError('');
+
+    try {
+      for (const item of selectedItems) {
+        if (!item.id || !canManage(item)) continue;
+        const resourceRef = doc(db, 'sections', item.sectionId, collectionName(resourceType), item.id);
+        const queueId = `${item.sectionId}_${resourceType}_${item.id}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+        await setDoc(doc(db, 'cloudinaryDeleteQueue', queueId), {
+          sectionId: item.sectionId,
+          resourceType,
+          resourceId: item.id,
+          title: item.title || '',
+          files: item.files || [],
+          requestedBy: profile.uid,
+          requestedByEmail: profile.email || '',
+          cleanupStatus: 'pending',
+          createdAt: serverTimestamp(),
+        });
+
+        await deleteDoc(resourceRef);
+      }
+
+      const deletedKeys = selectedItems.map(getResourceKey);
+      setItems((prev) => prev.filter((resource) => !deletedKeys.includes(getResourceKey(resource))));
+      setSelectedResourceKeys((prev) => prev.filter((key) => !deletedKeys.includes(key)));
+      if (editing && deletedKeys.includes(getResourceKey(editing))) resetForm();
+      if (isSuperAdmin) await loadSuperAdminItems();
+    } catch (err: any) {
+      console.error('Bulk delete resources failed:', err);
+      setError(err?.message || `Could not delete selected ${meta.title.toLowerCase()}.`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="bg-white dark:bg-neutral-900 p-5 md:p-6 rounded-3xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
@@ -391,6 +456,21 @@ export default function SectionResourceManager({ profile, resourceType, isSuperA
         </div>
       )}
 
+      {selectableItems.length > 0 && (
+        <div className="bg-white dark:bg-neutral-900 p-4 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <button type="button" onClick={toggleSelectAll} disabled={saving} className="flex items-center gap-3 text-left text-sm font-bold text-neutral-700 dark:text-neutral-200 disabled:opacity-50">
+            <span className={`w-5 h-5 rounded-md border flex items-center justify-center ${allSelectableSelected ? 'bg-blue-600 border-blue-600 text-white' : 'border-neutral-300 dark:border-neutral-600'}`}>
+              {allSelectableSelected ? '✓' : ''}
+            </span>
+            {allSelectableSelected ? 'Unselect all' : `Select all ${meta.title}`}
+          </button>
+          <button type="button" onClick={handleBulkDelete} disabled={saving || selectedItems.length === 0} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-red-600 text-white text-sm font-black disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 transition-colors">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+            Delete selected{selectedItems.length ? ` (${selectedItems.length})` : ''}
+          </button>
+        </div>
+      )}
+
       {showForm && (
         <motion.form onSubmit={handleSubmit} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-neutral-900 p-5 md:p-6 rounded-3xl border border-neutral-200 dark:border-neutral-800 shadow-sm space-y-4">
           {isSuperAdmin && !editing && (
@@ -421,12 +501,23 @@ export default function SectionResourceManager({ profile, resourceType, isSuperA
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {loading && <div className="col-span-full text-sm text-neutral-500 dark:text-neutral-400 font-medium">Loading {meta.title}...</div>}
         {!loading && filtered.length === 0 && <div className="col-span-full bg-white dark:bg-neutral-900 p-10 rounded-2xl border border-neutral-200 dark:border-neutral-800 text-center text-sm text-neutral-500 dark:text-neutral-400">No {meta.title.toLowerCase()} uploaded yet.</div>}
-        {filtered.map((item) => (
-          <div key={`${item.sectionId}-${item.id}`} className="bg-white dark:bg-neutral-900 p-5 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm space-y-4">
+        {filtered.map((item) => {
+          const selected = selectedResourceKeys.includes(getResourceKey(item));
+          const itemCanManage = canManage(item);
+
+          return (
+          <div key={`${item.sectionId}-${item.id}`} className={`bg-white dark:bg-neutral-900 p-5 rounded-2xl border shadow-sm space-y-4 ${selected ? 'border-blue-400 dark:border-blue-500 ring-2 ring-blue-500/10' : 'border-neutral-200 dark:border-neutral-800'}`}>
             <div className="flex items-start justify-between gap-4">
-              <div>
+              <div className="flex items-start gap-3 min-w-0">
+                {itemCanManage && (
+                  <button type="button" onClick={() => toggleSelectResource(item)} disabled={saving} className={`mt-0.5 w-5 h-5 shrink-0 rounded-md border flex items-center justify-center text-xs font-black ${selected ? 'bg-blue-600 border-blue-600 text-white' : 'border-neutral-300 dark:border-neutral-600 text-transparent'} disabled:opacity-50`} aria-label={selected ? `Unselect ${item.title}` : `Select ${item.title}`}>
+                    ✓
+                  </button>
+                )}
+                <div className="min-w-0">
                 <p className="font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">{item.title}</p>
                 <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">By {item.uploadedByName || 'Unknown'}{isSuperAdmin && item.sectionName ? ` • ${item.sectionName}` : ''}</p>
+                </div>
               </div>
               {canManage(item) && (
                 <div className="flex gap-2">
@@ -455,7 +546,8 @@ export default function SectionResourceManager({ profile, resourceType, isSuperA
               ))}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

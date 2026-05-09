@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../firebase';
 import { collection, query, onSnapshot, addDoc, deleteDoc, doc, updateDoc, serverTimestamp, getDocs } from 'firebase/firestore';
 import { UserProfile, Course, Announcement, Assignment, Section } from '../types';
@@ -9,6 +9,8 @@ import StudentDashboard from './StudentDashboard';
 import ProfileModal from './ProfileModal';
 import SectionResourceManager from './SectionResourceManager';
 import React from 'react';
+
+type AdminTab = 'overview' | 'courses' | 'announcements' | 'notes' | 'previousQuestions' | 'students' | 'assignments' | 'history' | 'settings' | 'all_users';
 
 interface AdminDashboardProps {
   profile: UserProfile;
@@ -124,10 +126,11 @@ export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminD
   const [allAssignments, setAllAssignments] = useState<Assignment[]>([]);
   const [resourceCounts, setResourceCounts] = useState({ notes: 0, previousQuestions: 0 });
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'courses' | 'announcements' | 'notes' | 'previousQuestions' | 'students' | 'assignments' | 'history' | 'settings' | 'all_users'>('overview');
+  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [sectionManagementMode, setSectionManagementMode] = useState<'students' | 'enrollment'>('students');
   const [courseManagementMode, setCourseManagementMode] = useState<'create' | 'list'>('create');
   const [taskManagementMode, setTaskManagementMode] = useState<'create' | 'list'>('create');
+  const [announcementManagementMode, setAnnouncementManagementMode] = useState<'create' | 'list'>('create');
   const [taskSortMode, setTaskSortMode] = useState<'timeLeft' | 'newest' | 'oldest'>('timeLeft');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   
@@ -154,6 +157,8 @@ export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminD
   const [editingStudentProfile, setEditingStudentProfile] = useState<UserProfile | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const activeSectionId = getActiveSectionId(profile);
+  const activeTabRef = useRef<AdminTab>('overview');
+  const adminHistoryPushedRef = useRef(false);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [docToDelete, setDocToDelete] = useState<{ col: string; id: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -194,6 +199,65 @@ export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminD
     }, 10000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    const handleBrowserBack = () => {
+      if (activeTabRef.current !== 'overview') {
+        adminHistoryPushedRef.current = false;
+        setActiveTab('overview');
+      }
+    };
+
+    window.addEventListener('popstate', handleBrowserBack);
+    return () => window.removeEventListener('popstate', handleBrowserBack);
+  }, []);
+
+  const prepareAdminTab = (tab: AdminTab) => {
+    if (tab === 'students') setSectionManagementMode('enrollment');
+    if (tab === 'courses') setCourseManagementMode('create');
+    if (tab === 'assignments') setTaskManagementMode('create');
+    if (tab === 'announcements') setAnnouncementManagementMode('create');
+  };
+
+  const openAdminPage = (tab: AdminTab) => {
+    if (tab === 'overview') return;
+
+    prepareAdminTab(tab);
+    const wasOnOverview = activeTabRef.current === 'overview';
+    setActiveTab(tab);
+
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const targetUrl = `${window.location.pathname}${window.location.search}#admin-${tab}`;
+
+      if (wasOnOverview) {
+        window.history.pushState({ taskbuddyAdminTab: tab }, '', targetUrl);
+        adminHistoryPushedRef.current = true;
+      } else {
+        window.history.replaceState({ taskbuddyAdminTab: tab }, '', targetUrl);
+      }
+    }
+  };
+
+  const closeAdminPage = () => {
+    if (activeTabRef.current === 'overview') return;
+
+    setActiveTab('overview');
+
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    if (typeof window !== 'undefined' && adminHistoryPushedRef.current) {
+      adminHistoryPushedRef.current = false;
+      window.history.back();
+    }
+  };
+
 
   const isTaskDone = (assignment: Assignment) => {
     if (assignment.urgency === 'done') return true;
@@ -445,6 +509,8 @@ export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminD
       }}
       className="space-y-8"
     >
+      {activeTab === 'overview' && (
+        <>
       {/* Welcome Header */}
       <motion.div 
         initial={{ opacity: 0, y: -10 }}
@@ -482,7 +548,7 @@ export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminD
               hidden: { opacity: 0, y: 10 },
               visible: { opacity: 1, y: 0 }
             }}
-            onClick={() => { setActiveTab(stat.tab); if (stat.tab === 'students') setSectionManagementMode('enrollment'); if (stat.tab === 'courses') setCourseManagementMode('create'); if (stat.tab === 'assignments') setTaskManagementMode('create'); }}
+            onClick={() => openAdminPage(stat.tab)}
             role="button"
             tabIndex={0}
             className="bg-white dark:bg-neutral-900 p-4 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm hover:border-blue-200 dark:hover:border-blue-800 transition-all flex flex-col items-center justify-center text-center space-y-2 group cursor-pointer active:scale-[0.98]"
@@ -512,10 +578,12 @@ export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminD
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">Courses, notices, notes, previous questions, assignments, history, and section management now open like separate admin pages.</p>
         </div>
       )}
+        </>
+      )}
 
       {activeTab !== 'overview' && (
         <div className="flex items-center justify-between gap-4">
-          <button type="button" onClick={() => setActiveTab('overview')} className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-sm font-semibold text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-50 transition-colors">
+          <button type="button" onClick={closeAdminPage} className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-sm font-semibold text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-50 transition-colors">
             <ArrowLeft className="w-4 h-4" /> Back
           </button>
           <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Section Admin Page</p>
@@ -658,115 +726,130 @@ export default function AdminDashboard({ profile, isSuperAdmin = false }: AdminD
         )}
 
         {activeTab === 'announcements' && (
-          <motion.div 
+          <motion.div
             key="announcements"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="grid grid-cols-1 lg:grid-cols-3 gap-6"
+            className="space-y-6"
           >
-            <div className="lg:col-span-1 bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm h-fit">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-8 h-8 bg-amber-50 dark:bg-amber-900/20 rounded-lg flex items-center justify-center text-amber-500">
-                  <Megaphone className="w-4 h-4" />
-                </div>
-                <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">Post Update</h3>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-3xl p-4 shadow-sm">
+              <div>
+                <h3 className="text-xl font-black text-neutral-900 dark:text-neutral-50 tracking-tight">Notice Management</h3>
+                <p className="text-[10px] text-neutral-400 dark:text-neutral-500 font-bold uppercase tracking-[0.2em] mt-1">Create notices or review all notices in this section</p>
               </div>
-              <form onSubmit={handleAddAnnouncement} className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider ml-1">Title</label>
-                  <input 
-                    type="text"
-                    value={newAnnouncement.title}
-                    onChange={e => setNewAnnouncement({...newAnnouncement, title: e.target.value})}
-                    placeholder="Announcement title..."
-                    className="w-full px-4 py-2.5 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-neutral-900/5 dark:focus:ring-neutral-50/5 transition-all text-sm text-neutral-900 dark:text-neutral-50"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider ml-1">Content</label>
-                  <textarea 
-                    value={newAnnouncement.content}
-                    onChange={e => setNewAnnouncement({...newAnnouncement, content: e.target.value})}
-                    placeholder="Write your message here..."
-                    rows={4}
-                    className="w-full px-4 py-2.5 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-neutral-900/5 dark:focus:ring-neutral-50/5 transition-all resize-none text-sm text-neutral-900 dark:text-neutral-50"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider ml-1">Priority</label>
-                  <div className="flex gap-2">
-                    {['normal', 'important'].map((p) => (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => setNewAnnouncement({ ...newAnnouncement, priority: p as any })}
-                        className={`flex-1 py-2 rounded-lg text-[10px] font-semibold uppercase tracking-wider border transition-all ${
-                          newAnnouncement.priority === p
-                            ? (p === 'important' ? 'bg-red-600 text-white border-red-600' : 'bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 border-neutral-900 dark:border-neutral-50')
-                            : 'bg-white dark:bg-neutral-900 text-neutral-500 dark:text-neutral-400 border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700'
-                        }`}
-                      >
-                        {p}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <button className="w-full bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-2.5 rounded-xl font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-all shadow-sm active:scale-[0.98] text-sm">
-                  Post Announcement
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAnnouncementManagementMode('create')}
+                  className={`px-5 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all ${announcementManagementMode === 'create' ? 'bg-neutral-900 text-white dark:bg-neutral-50 dark:text-neutral-900' : 'bg-neutral-100 text-neutral-500 hover:text-neutral-900 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-50'}`}
+                >
+                  Create Notice
                 </button>
-              </form>
+                <button
+                  type="button"
+                  onClick={() => setAnnouncementManagementMode('list')}
+                  className={`px-5 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all ${announcementManagementMode === 'list' ? 'bg-neutral-900 text-white dark:bg-neutral-50 dark:text-neutral-900' : 'bg-neutral-100 text-neutral-500 hover:text-neutral-900 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-50'}`}
+                >
+                  Show All Notice
+                </button>
+              </div>
             </div>
 
-            <div className="lg:col-span-2 space-y-4">
-              <div className="flex items-center justify-between px-1">
-                <h3 className="text-xl font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">Recent Updates</h3>
-                <span className="px-3 py-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg text-[10px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider">
-                  {announcements.length} Total
-                </span>
-              </div>
-              <div className="grid grid-cols-1 gap-3">
-                {announcements.map((ann, index) => (
-                  <motion.div 
-                    key={ann.id}
-                    initial={{ opacity: 0, x: 10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.05 }}
-                    className={`bg-white dark:bg-neutral-900 p-5 rounded-2xl border shadow-sm relative group transition-all hover:border-neutral-300 dark:hover:border-neutral-700 ${
-                      ann.priority === 'important' ? 'border-red-100 dark:border-red-900/30 bg-red-50/5 dark:bg-red-900/10' : 'border-neutral-200 dark:border-neutral-800'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-transform group-hover:rotate-6 ${
-                          ann.priority === 'important' ? 'bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400' : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-50'
-                        }`}>
-                          <Megaphone className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="font-semibold text-neutral-900 dark:text-neutral-50 text-base tracking-tight">{ann.title}</h3>
-                            {ann.priority === 'important' && (
-                              <span className="px-2 py-0.5 bg-red-600 text-white text-[9px] font-semibold uppercase tracking-wider rounded-md">Important</span>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-neutral-400 dark:text-neutral-500 font-medium">
-                            {new Date(ann.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-                          </p>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={() => deleteDocById('announcements', ann.id!)}
-                        className="p-2 text-neutral-300 hover:text-red-600 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+            {announcementManagementMode === 'create' ? (
+              <div className="max-w-xl bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm h-fit">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-8 h-8 bg-amber-50 dark:bg-amber-900/20 rounded-lg flex items-center justify-center text-amber-500">
+                    <Megaphone className="w-4 h-4" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">Create Notice</h3>
+                </div>
+                <form onSubmit={handleAddAnnouncement} className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider ml-1">Title</label>
+                    <input
+                      type="text"
+                      value={newAnnouncement.title}
+                      onChange={e => setNewAnnouncement({...newAnnouncement, title: e.target.value})}
+                      placeholder="Notice title..."
+                      className="w-full px-4 py-2.5 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-neutral-900/5 dark:focus:ring-neutral-50/5 transition-all text-sm text-neutral-900 dark:text-neutral-50"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider ml-1">Content</label>
+                    <textarea
+                      value={newAnnouncement.content}
+                      onChange={e => setNewAnnouncement({...newAnnouncement, content: e.target.value})}
+                      placeholder="Write your notice here..."
+                      rows={5}
+                      className="w-full px-4 py-2.5 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-neutral-900/5 dark:focus:ring-neutral-50/5 transition-all resize-none text-sm text-neutral-900 dark:text-neutral-50"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider ml-1">Priority</label>
+                    <div className="flex gap-2">
+                      {['normal', 'important'].map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setNewAnnouncement({ ...newAnnouncement, priority: p as any })}
+                          className={`flex-1 py-2 rounded-lg text-[10px] font-semibold uppercase tracking-wider border transition-all ${newAnnouncement.priority === p ? (p === 'important' ? 'bg-red-600 text-white border-red-600' : 'bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 border-neutral-900 dark:border-neutral-50') : 'bg-white dark:bg-neutral-900 text-neutral-500 dark:text-neutral-400 border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700'}`}
+                        >
+                          {p}
+                        </button>
+                      ))}
                     </div>
-                    <p className="text-neutral-600 dark:text-neutral-400 text-sm whitespace-pre-wrap leading-relaxed pl-13">{ann.content}</p>
-                  </motion.div>
-                ))}
+                  </div>
+                  <button className="w-full bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-2.5 rounded-xl font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-all shadow-sm active:scale-[0.98] text-sm">
+                    Create Notice
+                  </button>
+                </form>
               </div>
-            </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between px-1">
+                  <h3 className="text-xl font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">All Notices</h3>
+                  <span className="px-3 py-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg text-[10px] font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider">
+                    {announcements.length} Total
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 gap-3">
+                  {announcements.map((ann, index) => (
+                    <motion.div
+                      key={ann.id}
+                      initial={{ opacity: 0, x: 10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: index * 0.05 }}
+                      className={`bg-white dark:bg-neutral-900 p-5 rounded-2xl border shadow-sm relative group transition-all hover:border-neutral-300 dark:hover:border-neutral-700 ${ann.priority === 'important' ? 'border-red-100 dark:border-red-900/30 bg-red-50/5 dark:bg-red-900/10' : 'border-neutral-200 dark:border-neutral-800'}`}
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-transform group-hover:rotate-6 ${ann.priority === 'important' ? 'bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400' : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-50'}`}>
+                            <Megaphone className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-semibold text-neutral-900 dark:text-neutral-50 text-base tracking-tight">{ann.title}</h3>
+                              {ann.priority === 'important' && <span className="px-2 py-0.5 bg-red-600 text-white text-[9px] font-semibold uppercase tracking-wider rounded-md">Important</span>}
+                            </div>
+                            <p className="text-[11px] text-neutral-400 dark:text-neutral-500 font-medium">
+                              {new Date(ann.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => deleteDocById('announcements', ann.id!)}
+                          className="p-2 text-neutral-300 hover:text-red-600 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <p className="text-neutral-600 dark:text-neutral-400 text-sm whitespace-pre-wrap leading-relaxed pl-13">{ann.content}</p>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            )}
           </motion.div>
         )}
 
