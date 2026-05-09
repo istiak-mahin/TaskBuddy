@@ -10,6 +10,11 @@ type ReminderWindow = {
   title: string;
 };
 
+type DueMatch = {
+  matched: boolean;
+  minutesUntil: number;
+};
+
 const reminderWindows: ReminderWindow[] = [
   {
     key: '24h',
@@ -25,7 +30,9 @@ const reminderWindows: ReminderWindow[] = [
   },
 ];
 
-const runWindowMs = Number(process.env.REMINDER_WINDOW_MINUTES || '35') * 60 * 1000;
+const runWindowMs = Number(process.env.REMINDER_WINDOW_MINUTES || '45') * 60 * 1000;
+const timezoneOffsetMinutes = Number(process.env.REMINDER_TIMEZONE_OFFSET_MINUTES || '360');
+
 const fromEmail = process.env.REMINDER_FROM_EMAIL || 'TaskBuddy <onboarding@resend.dev>';
 const appUrl = process.env.APP_URL || 'https://istiak-mahin.github.io/TaskBuddy/';
 
@@ -70,11 +77,81 @@ function escapeHtml(value: unknown) {
     .replace(/'/g, '&#039;');
 }
 
-function getDeadlineIso(deadline: any) {
-  if (!deadline) return '';
-  if (typeof deadline === 'string') return deadline;
-  if (typeof deadline.toDate === 'function') return deadline.toDate().toISOString();
-  return '';
+function parseDeadlineToDate(deadline: any): Date | null {
+  if (!deadline) return null;
+
+  if (typeof deadline.toDate === 'function') {
+    const date = deadline.toDate();
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  if (deadline instanceof Date) {
+    return Number.isNaN(deadline.getTime()) ? null : deadline;
+  }
+
+  if (typeof deadline !== 'string') return null;
+
+  const value = deadline.trim();
+  if (!value) return null;
+
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
+
+  if (hasTimezone) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const match = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/
+  );
+
+  if (match) {
+    const [, year, month, day, hour = '00', minute = '00', second = '00'] = match;
+
+    const utcMs =
+      Date.UTC(
+        Number(year),
+        Number(month) - 1,
+        Number(day),
+        Number(hour),
+        Number(minute),
+        Number(second)
+      ) -
+      timezoneOffsetMinutes * 60 * 1000;
+
+    const date = new Date(utcMs);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const fallback = new Date(value);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+}
+
+function formatDeadline(deadlineDate: Date | null) {
+  if (!deadlineDate) return 'Unknown deadline';
+
+  return deadlineDate.toLocaleString('en-US', {
+    timeZone: 'Asia/Dhaka',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+function getDueMatch(now: Date, deadlineDate: Date, reminderWindow: ReminderWindow): DueMatch {
+  const diffMs = deadlineDate.getTime() - now.getTime();
+  const minutesUntil = Math.round(diffMs / 60000);
+
+  const windowStart = reminderWindow.offsetMs - runWindowMs;
+  const windowEnd = reminderWindow.offsetMs + 5 * 60 * 1000;
+
+  return {
+    matched: diffMs >= windowStart && diffMs <= windowEnd,
+    minutesUntil,
+  };
 }
 
 async function main() {
@@ -83,31 +160,58 @@ async function main() {
   const resend = new Resend(resendKey);
   const now = new Date();
 
+  let assignmentsChecked = 0;
   let notificationsCreated = 0;
   let emailsSent = 0;
   let skipped = 0;
 
   const sectionsSnapshot = await db.collection('sections').get();
+
   console.log(`Checking ${sectionsSnapshot.size} sections at ${now.toISOString()}`);
+  console.log(
+    `Reminder window: ${Math.round(runWindowMs / 60000)} minutes, timezone offset: +${timezoneOffsetMinutes} minutes`
+  );
 
   for (const sectionDoc of sectionsSnapshot.docs) {
-    for (const reminderWindow of reminderWindows) {
-      const startTime = new Date(now.getTime() + reminderWindow.offsetMs);
-      const endTime = new Date(startTime.getTime() + runWindowMs);
+    const assignmentsSnapshot = await sectionDoc.ref.collection('assignments').get();
 
-      const assignmentsSnapshot = await sectionDoc.ref
-        .collection('assignments')
-        .where('deadline', '>=', startTime.toISOString())
-        .where('deadline', '<', endTime.toISOString())
-        .get();
+    console.log(
+      `Section ${sectionDoc.id}: checking ${assignmentsSnapshot.size} assignments`
+    );
 
-      for (const assignmentDoc of assignmentsSnapshot.docs) {
-        const assignment = assignmentDoc.data();
-        const userId = assignment.userId;
-        const reminderSent = assignment.reminderSent || {};
+    for (const assignmentDoc of assignmentsSnapshot.docs) {
+      assignmentsChecked += 1;
 
-        if (!userId || assignment.urgency === 'done' || reminderSent[reminderWindow.key]) {
-          skipped += 1;
+      const assignment = assignmentDoc.data();
+      const userId = assignment.userId;
+      const reminderSent = assignment.reminderSent || {};
+      const deadlineDate = parseDeadlineToDate(assignment.deadline);
+
+      if (!deadlineDate) {
+        console.warn(
+          `Skipping ${assignmentDoc.id}: invalid deadline value "${assignment.deadline}"`
+        );
+        skipped += 1;
+        continue;
+      }
+
+      if (!userId || assignment.urgency === 'done') {
+        skipped += 1;
+        continue;
+      }
+
+      for (const reminderWindow of reminderWindows) {
+        if (reminderSent[reminderWindow.key]) {
+          continue;
+        }
+
+        const dueMatch = getDueMatch(now, deadlineDate, reminderWindow);
+
+        console.log(
+          `Assignment ${assignmentDoc.id}: ${assignment.title || 'Untitled'} due in ${dueMatch.minutesUntil} min, checking ${reminderWindow.key}`
+        );
+
+        if (!dueMatch.matched) {
           continue;
         }
 
@@ -122,8 +226,7 @@ async function main() {
         }
 
         const title = reminderWindow.title;
-        const deadlineIso = getDeadlineIso(assignment.deadline);
-        const deadlineText = deadlineIso ? new Date(deadlineIso).toLocaleString('en-US') : 'Unknown deadline';
+        const deadlineText = formatDeadline(deadlineDate);
         const message = `Reminder: Your ${assignment.type || 'task'} "${assignment.title}" for ${assignment.course} is due in about ${reminderWindow.label}.`;
 
         await sectionDoc.ref.collection('notifications').add({
@@ -136,6 +239,7 @@ async function main() {
           assignmentId: assignmentDoc.id,
           sectionId: sectionDoc.id,
         });
+
         notificationsCreated += 1;
 
         await resend.emails.send({
@@ -147,6 +251,7 @@ async function main() {
               <h2 style="margin: 0 0 16px; color: #111827;">${escapeHtml(title)}</h2>
               <p>Hello ${escapeHtml(user?.name || 'there')},</p>
               <p>Your deadline is approaching.</p>
+
               <div style="background: #f5f5f5; padding: 16px; border-radius: 12px; margin: 20px 0;">
                 <p><b>Title:</b> ${escapeHtml(assignment.title)}</p>
                 <p><b>Course:</b> ${escapeHtml(assignment.course)}</p>
@@ -154,12 +259,14 @@ async function main() {
                 <p><b>Due in:</b> ${escapeHtml(reminderWindow.label)}</p>
                 <p><b>Deadline:</b> ${escapeHtml(deadlineText)}</p>
               </div>
+
               <p><a href="${escapeHtml(appUrl)}" style="color: #2563eb;">Open TaskBuddy</a></p>
               <p style="font-size: 12px; color: #737373;">— TaskBuddy Automated Reminder</p>
             </div>
           `,
           text: `${message}\nDeadline: ${deadlineText}\nOpen TaskBuddy: ${appUrl}`,
         });
+
         emailsSent += 1;
 
         await assignmentDoc.ref.update({
@@ -167,13 +274,15 @@ async function main() {
           [`reminderSentAt.${reminderWindow.key}`]: FieldValue.serverTimestamp(),
         });
 
-        console.log(`Sent ${reminderWindow.key} reminder to ${email} for assignment ${assignmentDoc.id}`);
+        console.log(
+          `Sent ${reminderWindow.key} reminder to ${email} for assignment ${assignmentDoc.id}`
+        );
       }
     }
   }
 
   console.log(
-    `Done. notifications=${notificationsCreated}, emails=${emailsSent}, skipped=${skipped}`
+    `Done. assignments=${assignmentsChecked}, notifications=${notificationsCreated}, emails=${emailsSent}, skipped=${skipped}`
   );
 }
 
