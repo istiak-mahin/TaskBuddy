@@ -9,6 +9,8 @@ import {
 import {
   Edit3,
   Layers,
+  FileText,
+  ClipboardList,
   Plus,
   RefreshCcw,
   Save,
@@ -18,11 +20,13 @@ import {
   UserPlus,
   Users,
   X,
+  ArrowLeft,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { db } from '../firebase';
 import { Section, UserProfile, UserRole } from '../types';
 import { changeUserSectionAsAdmin, normalizeJoinCode } from '../services/sectionService';
+import SectionResourceManager from './SectionResourceManager';
 
 const emptySectionForm = { name: '', department: '', semester: '', batch: '', joinCode: '' };
 
@@ -42,6 +46,8 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
   const [saving, setSaving] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [userEditForm, setUserEditForm] = useState({ sectionName: '', department: '', role: 'student' as UserRole });
+  const [activeView, setActiveView] = useState<'overview' | 'sections' | 'users' | 'notes' | 'previousQuestions'>('overview');
+  const [resourceCounts, setResourceCounts] = useState({ notes: 0, previousQuestions: 0 });
 
   const getDepartmentLabel = (section?: Pick<Section, 'department'> | null) =>
     section?.department?.trim() || 'No Department';
@@ -59,6 +65,20 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
       const sectionData = sectionSnap.docs.map((item) => ({ id: item.id, ...item.data() } as Section));
       const userData = userSnap.docs.map((item) => ({ uid: item.id, ...item.data() } as UserProfile));
 
+      const counts = await sectionData.reduce(async (prevPromise, section) => {
+        const prev = await prevPromise;
+        if (!section.id) return prev;
+        const [notesSnap, previousQuestionsSnap] = await Promise.all([
+          getDocs(collection(db, 'sections', section.id, 'notes')),
+          getDocs(collection(db, 'sections', section.id, 'previousQuestions')),
+        ]);
+        return {
+          notes: prev.notes + notesSnap.docs.filter((item) => !item.data().deleteRequested).length,
+          previousQuestions: prev.previousQuestions + previousQuestionsSnap.docs.filter((item) => !item.data().deleteRequested).length,
+        };
+      }, Promise.resolve({ notes: 0, previousQuestions: 0 }));
+
+      setResourceCounts(counts);
       setSections(sectionData);
       setUsers(userData);
 
@@ -478,6 +498,129 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
       {error && <div className="bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/40 text-red-700 dark:text-red-300 rounded-2xl px-4 py-3 text-sm font-semibold">{error}</div>}
       {message && <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40 text-blue-700 dark:text-blue-300 rounded-2xl px-4 py-3 text-sm font-semibold">{message}</div>}
 
+
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { label: 'Sections', value: sections.length, icon: Layers, color: 'blue', view: 'sections' as const },
+          { label: 'Users', value: users.length, icon: Users, color: 'emerald', view: 'users' as const },
+          { label: 'Notes', value: resourceCounts.notes, icon: FileText, color: 'violet', view: 'notes' as const },
+          { label: 'Previous Question', value: resourceCounts.previousQuestions, icon: ClipboardList, color: 'cyan', view: 'previousQuestions' as const },
+        ].map((stat, index) => (
+          <motion.div
+            key={stat.label}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.05 }}
+            onClick={() => setActiveView(stat.view)}
+            className="bg-white dark:bg-neutral-900 p-5 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm flex items-center justify-between hover:border-blue-200 dark:hover:border-blue-800 cursor-pointer transition-all text-left"
+            role="button"
+            tabIndex={0}
+          >
+            <div>
+              <p className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 mb-1">{stat.label}</p>
+              <h3 className="text-2xl font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">{stat.value}</h3>
+            </div>
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+              stat.color === 'blue' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-500' :
+              stat.color === 'emerald' ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-500' :
+              stat.color === 'violet' ? 'bg-violet-50 dark:bg-violet-900/20 text-violet-500' :
+              'bg-cyan-50 dark:bg-cyan-900/20 text-cyan-500'
+            }`}>
+              <stat.icon className="w-5 h-5" />
+            </div>
+          </motion.div>
+        ))}
+      </div>
+
+
+
+      {activeView !== 'overview' && (
+        <div className="flex items-center justify-between gap-4">
+          <button type="button" onClick={() => setActiveView('overview')} className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-sm font-semibold text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-50 transition-colors">
+            <ArrowLeft className="w-4 h-4" /> Back
+          </button>
+          <p className="text-xs font-black uppercase tracking-widest text-neutral-400">Super Admin Section</p>
+        </div>
+      )}
+
+      {activeView === 'notes' && <SectionResourceManager profile={profile} resourceType="notes" isSuperAdmin sections={sections} />}
+      {activeView === 'previousQuestions' && <SectionResourceManager profile={profile} resourceType="previousQuestions" isSuperAdmin sections={sections} />}
+
+      {activeView === 'sections' && (
+        <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
+          <div className="flex items-center gap-3 mb-6"><Layers className="w-5 h-5 text-neutral-400" /><h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">All Sections</h3></div>
+          <div className="space-y-3">
+            {sections.length === 0 && !loadingData && <p className="text-sm text-neutral-400 dark:text-neutral-500 font-medium">No sections yet.</p>}
+            {sections.map((section) => {
+              const isEditing = editingSectionId === section.id;
+              return (
+                <div key={section.id} className="p-4 rounded-2xl bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700">
+                  {isEditing ? (
+                    <div className="space-y-3">
+                      {[
+                        ['name', 'Section Name'],
+                        ['department', 'Department'],
+                        ['semester', 'Semester'],
+                        ['batch', 'Batch'],
+                        ['joinCode', 'Join Code'],
+                      ].map(([key, label]) => (
+                        <div key={key}>
+                          <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400">{label}</label>
+                          <input value={(editForm as any)[key]} onChange={(event) => setEditForm((prev) => ({ ...prev, [key]: event.target.value }))} className="mt-1 w-full px-3 py-2 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none" />
+                        </div>
+                      ))}
+                      <div className="flex gap-2 pt-2">
+                        <button type="button" onClick={() => handleUpdateSection(section)} disabled={saving} className="flex-1 flex items-center justify-center gap-2 bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest disabled:opacity-50"><Save className="w-3.5 h-3.5" /> Save</button>
+                        <button type="button" onClick={cancelEditSection} disabled={saving} className="flex items-center justify-center gap-2 bg-white dark:bg-neutral-900 text-neutral-500 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest disabled:opacity-50"><X className="w-3.5 h-3.5" /> Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="font-semibold text-neutral-900 dark:text-neutral-50">{section.name}</p>
+                        <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">{[section.department, section.semester, section.batch].filter(Boolean).join(' • ') || 'No details'}</p>
+                        <p className="text-[10px] uppercase tracking-widest text-neutral-400 mt-2">Admins: {section.adminIds?.length || 0}</p>
+                        {section.joinCode && <p className="text-[10px] uppercase tracking-widest text-blue-500 dark:text-blue-400 mt-1">Join Code: {section.joinCode}</p>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => startEditSection(section)} disabled={saving} className="w-9 h-9 flex items-center justify-center rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-50 transition-colors disabled:opacity-50" title="Edit section"><Edit3 className="w-4 h-4" /></button>
+                        <button type="button" onClick={() => handleDeleteSection(section)} disabled={saving} className="w-9 h-9 flex items-center justify-center rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/40 text-red-500 hover:text-red-700 dark:hover:text-red-300 transition-colors disabled:opacity-50" title="Delete section"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {activeView === 'users' && (
+        <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
+          <div className="flex items-center justify-between gap-4 mb-6">
+            <div className="flex items-center gap-3"><Users className="w-5 h-5 text-neutral-400" /><h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">All Users</h3></div>
+            <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-400" /><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search" className="pl-9 pr-4 py-2 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-xs font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none w-44" /></div>
+          </div>
+          <div className="space-y-3 max-h-[620px] overflow-y-auto custom-scrollbar">
+            {filteredUsers.length === 0 && !loadingData && <p className="text-sm text-neutral-400 dark:text-neutral-500 font-medium">No users found.</p>}
+            {filteredUsers.map((user) => (
+              <button type="button" key={user.uid} onClick={() => openUserEditor(user)} className="w-full text-left p-4 rounded-2xl bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700 hover:border-blue-200 dark:hover:border-blue-800 hover:bg-blue-50/40 dark:hover:bg-blue-900/10 transition-all group">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="font-semibold text-neutral-900 dark:text-neutral-50">{user.name || 'Unnamed User'}</p>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">{user.email || 'No email'}</p>
+                    <div className="flex flex-wrap items-center gap-2 mt-2"><span className="text-[10px] uppercase tracking-widest text-neutral-400">{user.role || 'student'}</span><span className="text-[10px] font-black uppercase tracking-widest text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity">Click to edit</span></div>
+                  </div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400 max-w-[160px] text-right">{getUserSectionLabel(user)}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeView === 'overview' && (<>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
           <div className="flex items-center gap-3 mb-6">
@@ -563,91 +706,14 @@ export default function SuperAdminPanel({ profile }: { profile: UserProfile }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
-          <div className="flex items-center gap-3 mb-6"><Layers className="w-5 h-5 text-neutral-400" /><h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">Sections</h3></div>
-          <div className="space-y-3">
-            {sections.length === 0 && !loadingData && <p className="text-sm text-neutral-400 dark:text-neutral-500 font-medium">No sections yet.</p>}
-            {sections.map((section) => {
-              const isEditing = editingSectionId === section.id;
-
-              return (
-                <div key={section.id} className="p-4 rounded-2xl bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700">
-                  {isEditing ? (
-                    <div className="space-y-3">
-                      {[
-                        ['name', 'Section Name'],
-                        ['department', 'Department'],
-                        ['semester', 'Semester'],
-                        ['batch', 'Batch'],
-                        ['joinCode', 'Join Code'],
-                      ].map(([key, label]) => (
-                        <div key={key}>
-                          <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400">{label}</label>
-                          <input
-                            value={(editForm as any)[key]}
-                            onChange={(event) => setEditForm((prev) => ({ ...prev, [key]: event.target.value }))}
-                            className="mt-1 w-full px-3 py-2 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none"
-                          />
-                        </div>
-                      ))}
-                      <div className="flex gap-2 pt-2">
-                        <button type="button" onClick={() => handleUpdateSection(section)} disabled={saving} className="flex-1 flex items-center justify-center gap-2 bg-neutral-900 dark:bg-neutral-50 text-white dark:text-neutral-900 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest disabled:opacity-50"><Save className="w-3.5 h-3.5" /> Save</button>
-                        <button type="button" onClick={cancelEditSection} disabled={saving} className="flex items-center justify-center gap-2 bg-white dark:bg-neutral-900 text-neutral-500 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest disabled:opacity-50"><X className="w-3.5 h-3.5" /> Cancel</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <p className="font-semibold text-neutral-900 dark:text-neutral-50">{section.name}</p>
-                          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">{[section.department, section.semester, section.batch].filter(Boolean).join(' • ') || 'No details'}</p>
-                          <p className="text-[10px] uppercase tracking-widest text-neutral-400 mt-2">Admins: {section.adminIds?.length || 0}</p>
-                          {section.joinCode && <p className="text-[10px] uppercase tracking-widest text-blue-500 dark:text-blue-400 mt-1">Join Code: {section.joinCode}</p>}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button type="button" onClick={() => startEditSection(section)} disabled={saving} className="w-9 h-9 flex items-center justify-center rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-50 transition-colors disabled:opacity-50" title="Edit section"><Edit3 className="w-4 h-4" /></button>
-                          <button type="button" onClick={() => handleDeleteSection(section)} disabled={saving} className="w-9 h-9 flex items-center justify-center rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/40 text-red-500 hover:text-red-700 dark:hover:text-red-300 transition-colors disabled:opacity-50" title="Delete section"><Trash2 className="w-4 h-4" /></button>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
-          <div className="flex items-center justify-between gap-4 mb-6">
-            <div className="flex items-center gap-3"><Users className="w-5 h-5 text-neutral-400" /><h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-50 tracking-tight">Users</h3></div>
-            <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-400" /><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search" className="pl-9 pr-4 py-2 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-xs font-medium text-neutral-900 dark:text-neutral-50 focus:outline-none w-44" /></div>
-          </div>
-          <div className="space-y-3 max-h-[520px] overflow-y-auto custom-scrollbar">
-            {filteredUsers.length === 0 && !loadingData && <p className="text-sm text-neutral-400 dark:text-neutral-500 font-medium">No users found.</p>}
-            {filteredUsers.map((user) => (
-              <button
-                type="button"
-                key={user.uid}
-                onClick={() => openUserEditor(user)}
-                className="w-full text-left p-4 rounded-2xl bg-neutral-50 dark:bg-neutral-800 border border-neutral-100 dark:border-neutral-700 hover:border-blue-200 dark:hover:border-blue-800 hover:bg-blue-50/40 dark:hover:bg-blue-900/10 transition-all group"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="font-semibold text-neutral-900 dark:text-neutral-50">{user.name || 'Unnamed User'}</p>
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">{user.email || 'No email'}</p>
-                    <div className="flex flex-wrap items-center gap-2 mt-2">
-                      <span className="text-[10px] uppercase tracking-widest text-neutral-400">{user.role || 'student'}</span>
-                      <span className="text-[10px] font-black uppercase tracking-widest text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity">Click to edit</span>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400 max-w-[160px] text-right">{getUserSectionLabel(user)}</span>
-                </div>
-              </button>
-            ))}
-          </div>
+      <div className="bg-white dark:bg-neutral-900 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
+        <div className="text-center py-6">
+          <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">Choose a card above to manage that area.</p>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">Sections and Users are now opened from their own dashboard cards.</p>
         </div>
       </div>
+
+      </>)}
 
       {selectedUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={closeUserEditor}>

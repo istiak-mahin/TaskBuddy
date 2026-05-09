@@ -1,12 +1,12 @@
-name: Send deadline reminders
+name: Cleanup deleted Cloudinary files
 
 on:
   schedule:
-    - cron: '17,47 * * * *'
+    - cron: '12 */6 * * *'
   workflow_dispatch:
 
 jobs:
-  send-reminders:
+  cleanup-cloudinary:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,14 +24,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run reminder job
-        run: npm run reminders
+      - name: Run Cloudinary cleanup
+        run: npm run cleanup:cloudinary
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           FIREBASE_DATABASE_ID: ${{ secrets.FIREBASE_DATABASE_ID }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          REMINDER_FROM_EMAIL: ${{ secrets.REMINDER_FROM_EMAIL }}
-          APP_URL: ${{ vars.APP_URL }}
-          REMINDER_WINDOW_MINUTES: '45'
-          REMINDER_TIMEZONE_OFFSET_MINUTES: '360'
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}

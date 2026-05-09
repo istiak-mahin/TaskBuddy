@@ -28,6 +28,7 @@ import {
   MessageCircle,
 } from 'lucide-react';
 import { isSuperAdminEmail } from './services/sectionService';
+import { setupForegroundPushListener } from './services/pushNotificationService';
 import { motion, AnimatePresence } from 'motion/react';
 
 type AppView = 'dashboard' | 'admin' | 'superadmin';
@@ -157,6 +158,18 @@ export default function App() {
     setViewState(nextView);
     saveStoredView(user?.uid || profile?.uid, nextView);
   };
+
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+
+    setupForegroundPushListener().then((cleanup) => {
+      unsubscribe = cleanup;
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (!profile || !user) return;

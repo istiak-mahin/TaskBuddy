@@ -3,8 +3,9 @@ import { auth, db } from '../firebase';
 import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, orderBy, limit } from 'firebase/firestore';
 import { Assignment, UserProfile, Course, Announcement, AppNotification } from '../types';
 import { getActiveSectionId, getSectionCollection, getSectionDoc } from '../services/sectionService';
-import { Plus, Trash2, CheckCircle2, AlertCircle, Clock, BookOpen, BarChart3, X, Megaphone, Trophy, Target, Bell, Search, Filter, History, Star, Loader2, Send, Edit2 } from 'lucide-react';
+import { Plus, Trash2, CheckCircle2, AlertCircle, Clock, BookOpen, BarChart3, X, Megaphone, Trophy, Target, Bell, Search, Filter, History, Star, Loader2, Send, Edit2, FileText, ClipboardList } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import SectionResourceManager from './SectionResourceManager';
 
 interface StudentDashboardProps {
   profile: UserProfile;
@@ -121,7 +122,8 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
-  const [activeTab, setActiveTab] = useState<'assignments' | 'announcements' | 'history'>('assignments');
+  const [resourceCounts, setResourceCounts] = useState({ notes: 0, previousQuestions: 0 });
+  const [activeTab, setActiveTab] = useState<'assignments' | 'announcements' | 'notes' | 'previousQuestions' | 'history'>('assignments');
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCourse, setFilterCourse] = useState('all');
@@ -196,6 +198,16 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       orderBy('createdAt', 'desc'),
       limit(20)
     );
+    const notesQ = query(getSectionCollection(profile, 'notes'));
+    const unsubscribeNotes = onSnapshot(notesQ, (snapshot) => {
+      setResourceCounts((prev) => ({ ...prev, notes: snapshot.docs.filter((item) => !item.data().deleteRequested).length }));
+    });
+
+    const previousQuestionsQ = query(getSectionCollection(profile, 'previousQuestions'));
+    const unsubscribePreviousQuestions = onSnapshot(previousQuestionsQ, (snapshot) => {
+      setResourceCounts((prev) => ({ ...prev, previousQuestions: snapshot.docs.filter((item) => !item.data().deleteRequested).length }));
+    });
+
     const unsubscribeNotifs = onSnapshot(notifQ, (snapshot) => {
       const newNotifs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AppNotification));
       
@@ -214,6 +226,8 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       unsubscribe();
       unsubscribeSubs();
       unsubscribeAnns();
+      unsubscribeNotes();
+      unsubscribePreviousQuestions();
       unsubscribeNotifs();
     };
   }, [profile.uid, isAdmin, studentId, activeSectionId]);
@@ -426,6 +440,30 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
         scrollToContent();
       }
     },
+    { 
+      label: 'Notes', 
+      value: resourceCounts.notes, 
+      icon: FileText, 
+      color: 'text-violet-600', 
+      bg: 'bg-violet-50', 
+      border: 'border-violet-100',
+      action: () => {
+        setActiveTab('notes');
+        scrollToContent();
+      }
+    },
+    { 
+      label: 'Previous Question', 
+      value: resourceCounts.previousQuestions, 
+      icon: ClipboardList, 
+      color: 'text-cyan-600', 
+      bg: 'bg-cyan-50', 
+      border: 'border-cyan-100',
+      action: () => {
+        setActiveTab('previousQuestions');
+        scrollToContent();
+      }
+    },
   ];
 
   if (loading) {
@@ -541,7 +579,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       </motion.div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {stats.map((stat, i) => (
           <motion.div
             key={stat.label}
@@ -570,7 +608,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
         {/* Tab Header */}
         <div className="px-4 sm:px-6 py-4 border-b border-neutral-100 dark:border-neutral-800 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-center gap-1 bg-neutral-100/50 dark:bg-neutral-800 p-1 rounded-xl w-full sm:w-fit overflow-x-auto no-scrollbar">
-            {(['assignments', 'announcements', 'history'] as const).map((tab) => (
+            {(['assignments', 'announcements', 'notes', 'previousQuestions', 'history'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -580,7 +618,7 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                     : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'
                 }`}
               >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                {tab === 'previousQuestions' ? 'Previous Question' : tab.charAt(0).toUpperCase() + tab.slice(1)}
               </button>
             ))}
           </div>
@@ -813,6 +851,30 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
                     <p className="text-sm font-medium text-neutral-400">No announcements yet</p>
                   </div>
                 )}
+              </motion.div>
+            )}
+
+
+
+            {activeTab === 'notes' && (
+              <motion.div
+                key="notes"
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+              >
+                <SectionResourceManager profile={profile} resourceType="notes" />
+              </motion.div>
+            )}
+
+            {activeTab === 'previousQuestions' && (
+              <motion.div
+                key="previousQuestions"
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+              >
+                <SectionResourceManager profile={profile} resourceType="previousQuestions" />
               </motion.div>
             )}
 

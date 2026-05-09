@@ -208,6 +208,40 @@ service cloud.firestore {
              );
     }
 
+
+
+    function isValidSectionResource(data, sectionId) {
+      return data.title is string &&
+             data.title.size() > 0 &&
+             data.title.size() < 200 &&
+             (!('description' in data) || data.description is string) &&
+             data.resourceType in ['notes', 'previousQuestions'] &&
+             data.sectionId == sectionId &&
+             data.uploadedBy is string &&
+             data.uploadedBy.size() > 0 &&
+             (!('uploadedByName' in data) || data.uploadedByName is string) &&
+             (!('uploadedByEmail' in data) || data.uploadedByEmail is string) &&
+             data.files is list &&
+             data.files.size() <= 10 &&
+             (!('storageProvider' in data) || data.storageProvider == 'cloudinary') &&
+             (!('deleteRequested' in data) || data.deleteRequested is bool) &&
+             (!('cleanupStatus' in data) || data.cleanupStatus in ['active', 'pending', 'deleted', 'failed']) &&
+             (!('deleteRequestedBy' in data) || data.deleteRequestedBy is string) &&
+             (!('deleteRequestedAt' in data) || data.deleteRequestedAt is timestamp || isValidDateString(data.deleteRequestedAt)) &&
+             (!('createdAt' in data) || data.createdAt is timestamp || isValidDateString(data.createdAt)) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp || isValidDateString(data.updatedAt));
+    }
+
+    function canCreateSectionResource(sectionId) {
+      return isSectionMember(sectionId) &&
+             request.resource.data.uploadedBy == request.auth.uid &&
+             request.resource.data.sectionId == sectionId;
+    }
+
+    function canManageSectionResource() {
+      return isAdmin() || resource.data.uploadedBy == request.auth.uid;
+    }
+
     function isValidJoinCode(data) {
       return data.code is string &&
              data.code.size() > 0 &&
@@ -243,6 +277,14 @@ service cloud.firestore {
       );
 
       allow delete: if isAdmin();
+      match /notificationTokens/{tokenId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if isOwner(userId)
+                              && request.resource.data.token is string
+                              && request.resource.data.platform == 'web'
+                              && request.resource.data.active is bool;
+        allow delete: if isOwner(userId) || isAdmin();
+      }
     }
 
     match /usernames/{username} {
@@ -309,6 +351,20 @@ service cloud.firestore {
       allow delete: if isAdmin() || isSectionAdmin(resource.data.sectionId);
     }
 
+
+
+    match /cloudinaryDeleteQueue/{requestId} {
+      allow create: if isAuthenticated()
+                    && request.resource.data.requestedBy == request.auth.uid
+                    && request.resource.data.sectionId is string
+                    && isSectionMember(request.resource.data.sectionId)
+                    && request.resource.data.resourceType in ['notes', 'previousQuestions']
+                    && request.resource.data.files is list
+                    && request.resource.data.files.size() <= 10
+                    && request.resource.data.cleanupStatus == 'pending';
+      allow read, update, delete: if isAdmin();
+    }
+
     match /sections/{sectionId} {
       allow get: if isAuthenticated();
       allow list: if isAdmin();
@@ -359,6 +415,21 @@ service cloud.firestore {
         allow read: if isSectionMember(sectionId);
         allow create, update, delete: if isSectionAdmin(sectionId);
       }
+
+      match /notes/{noteId} {
+        allow read: if isSectionMember(sectionId);
+        allow create: if canCreateSectionResource(sectionId) && isValidSectionResource(request.resource.data, sectionId);
+        allow update: if canManageSectionResource() && isValidSectionResource(request.resource.data, sectionId);
+        allow delete: if canManageSectionResource();
+      }
+
+      match /previousQuestions/{questionId} {
+        allow read: if isSectionMember(sectionId);
+        allow create: if canCreateSectionResource(sectionId) && isValidSectionResource(request.resource.data, sectionId);
+        allow update: if canManageSectionResource() && isValidSectionResource(request.resource.data, sectionId);
+        allow delete: if canManageSectionResource();
+      }
+
     }
 
     match /{path=**} {

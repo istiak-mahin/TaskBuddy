@@ -4,15 +4,16 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
+    "dev": "tsx scripts/generate-fcm-sw.ts && vite --host 0.0.0.0",
+    "build": "tsx scripts/generate-fcm-sw.ts && vite build",
     "preview": "vite preview",
     "predeploy": "npm run build",
     "deploy": "npm run build && gh-pages -d dist",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "server": "tsx server.ts",
-    "reminders": "tsx scripts/send-reminders.ts"
+    "reminders": "tsx scripts/send-reminders.ts",
+    "cleanup:cloudinary": "tsx scripts/cleanup-cloudinary-resources.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

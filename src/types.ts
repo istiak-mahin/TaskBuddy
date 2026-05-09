@@ -58,6 +58,36 @@ export interface Announcement {
   priority?: 'normal' | 'important';
 }
 
+export interface SectionResourceFile {
+  name: string;
+  path: string;
+  url: string;
+  type: string;
+  size: number;
+  publicId?: string;
+  cloudName?: string;
+  cloudinaryResourceType?: 'image' | 'raw' | 'video';
+  format?: string;
+}
+
+export interface SectionResource {
+  id?: string;
+  title: string;
+  description?: string;
+  resourceType: 'notes' | 'previousQuestions';
+  sectionId: string;
+  sectionName?: string;
+  uploadedBy: string;
+  uploadedByName?: string;
+  uploadedByEmail?: string;
+  files: SectionResourceFile[];
+  deleteRequested?: boolean;
+  cleanupStatus?: 'active' | 'pending' | 'deleted' | 'failed';
+  storageProvider?: 'cloudinary';
+  createdAt?: any;
+  updatedAt?: any;
+}
+
 export interface AppNotification {
   id?: string;
   userId: string;

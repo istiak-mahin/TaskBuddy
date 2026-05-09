@@ -14,9 +14,11 @@ import {
   AlertCircle,
   CheckCircle2,
   KeyRound,
+  Bell,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { generateSmallImageDataUrl } from '../lib/imageUtils';
+import { enablePushNotifications, getNotificationPermissionStatus, isPushNotificationSupported } from '../services/pushNotificationService';
 
 interface ProfileModalProps {
   profile: UserProfile;
@@ -45,8 +47,23 @@ export default function ProfileModal({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [sectionKey, setSectionKey] = useState('');
+  const [pushStatus, setPushStatus] = useState<NotificationPermission | 'unsupported'>('unsupported');
+  const [pushSaving, setPushSaving] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    isPushNotificationSupported().then((supported) => {
+      if (!mounted) return;
+      setPushStatus(supported ? getNotificationPermissionStatus() : 'unsupported');
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -147,6 +164,24 @@ export default function ProfileModal({
     } catch (err: any) {
       console.error('Image convert failed:', err);
       throw new Error(err?.message || 'Photo processing failed. Please try another image.');
+    }
+  };
+
+  const handleEnablePushNotifications = async () => {
+    setPushSaving(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      await enablePushNotifications();
+      setPushStatus(getNotificationPermissionStatus());
+      setSuccess('Phone/browser deadline notifications enabled successfully.');
+    } catch (err: any) {
+      console.error('Push notification setup failed:', err);
+      setPushStatus(getNotificationPermissionStatus());
+      setError(err?.message || 'Could not enable push notifications.');
+    } finally {
+      setPushSaving(false);
     }
   };
 
@@ -396,6 +431,35 @@ export default function ProfileModal({
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
               Use only letters, numbers, or underscore. Do not type @.
             </p>
+          </div>
+
+          <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-950/40">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
+                <Bell size={18} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-50">
+                  Phone / Browser Notifications
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+                  Enable this to receive deadline reminders on your phone or browser 24 hours and 1 hour before due time.
+                </p>
+                <p className="mt-2 text-xs font-medium text-neutral-600 dark:text-neutral-300">
+                  Status: {pushStatus === 'unsupported' ? 'Unsupported' : pushStatus}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleEnablePushNotifications}
+              disabled={saving || pushSaving || pushStatus === 'unsupported' || pushStatus === 'granted'}
+              className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm font-semibold text-neutral-900 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:hover:bg-neutral-800"
+            >
+              {pushSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bell className="h-4 w-4" />}
+              {pushStatus === 'granted' ? 'Notifications Enabled' : 'Enable Notifications'}
+            </button>
           </div>
 
           <div className="space-y-2">
