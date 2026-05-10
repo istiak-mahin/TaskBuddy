@@ -252,7 +252,6 @@ async function main() {
       assignmentsChecked += 1;
 
       const assignment = assignmentDoc.data();
-      const userId = assignment.userId;
       const reminderSent = assignment.reminderSent || {};
       const deadlineDate = parseDeadlineToDate(assignment.deadline);
 
@@ -262,7 +261,7 @@ async function main() {
         continue;
       }
 
-      if (!userId || assignment.urgency === 'done') {
+      if (assignment.urgency === 'done') {
         skipped += 1;
         continue;
       }
@@ -281,60 +280,71 @@ async function main() {
           continue;
         }
 
-        const userDoc = await db.collection('users').doc(userId).get();
-        const user = userDoc.data();
-        const email = user?.email;
         const title = reminderWindow.title;
         const deadlineText = formatDeadline(deadlineDate);
-        const message = `Reminder: Your ${assignment.type || 'task'} "${assignment.title}" for ${assignment.course} is due in about ${reminderWindow.label}.`;
+        const message = `Reminder: "${assignment.title}" (${assignment.course}) is due in about ${reminderWindow.label}.`;
 
-        await sectionDoc.ref.collection('notifications').add({
-          userId,
-          title,
-          message,
-          type: 'reminder',
-          read: false,
-          createdAt: now.toISOString(),
-          assignmentId: assignmentDoc.id,
-          sectionId: sectionDoc.id,
-        });
-        notificationsCreated += 1;
+        // Fetch ALL students in this section and notify each one
+        const studentsSnapshot = await sectionDoc.ref.collection('students').get();
+        const studentIds: string[] = studentsSnapshot.docs.map(d => d.id);
 
-        const pushResult = await sendPushToUser(db, userId, {
-          title,
-          body: message,
-          assignmentId: assignmentDoc.id,
-          sectionId: sectionDoc.id,
-        });
-        pushesSent += pushResult.sent;
-        pushFailures += pushResult.failed;
+        console.log(`Section ${sectionDoc.id}: notifying ${studentIds.length} students for assignment ${assignmentDoc.id}`);
 
-        if (resend && email) {
-          await resend.emails.send({
-            from: fromEmail,
-            to: email,
-            subject: `TaskBuddy: ${title}`,
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #171717;">
-                <h2 style="margin: 0 0 16px; color: #111827;">${escapeHtml(title)}</h2>
-                <p>Hello ${escapeHtml(user?.name || 'there')},</p>
-                <p>Your deadline is approaching.</p>
-                <div style="background: #f5f5f5; padding: 16px; border-radius: 12px; margin: 20px 0;">
-                  <p><b>Title:</b> ${escapeHtml(assignment.title)}</p>
-                  <p><b>Course:</b> ${escapeHtml(assignment.course)}</p>
-                  <p><b>Type:</b> ${escapeHtml(assignment.type || 'Task')}</p>
-                  <p><b>Due in:</b> ${escapeHtml(reminderWindow.label)}</p>
-                  <p><b>Deadline:</b> ${escapeHtml(deadlineText)}</p>
-                </div>
-                <p><a href="${escapeHtml(appUrl)}" style="color: #2563eb;">Open TaskBuddy</a></p>
-                <p style="font-size: 12px; color: #737373;">— TaskBuddy Automated Reminder</p>
-              </div>
-            `,
-            text: `${message}\nDeadline: ${deadlineText}\nOpen TaskBuddy: ${appUrl}`,
+        for (const studentId of studentIds) {
+          // In-app notification for each student
+          await sectionDoc.ref.collection('notifications').add({
+            userId: studentId,
+            title,
+            message,
+            type: 'reminder',
+            read: false,
+            createdAt: now.toISOString(),
+            assignmentId: assignmentDoc.id,
+            sectionId: sectionDoc.id,
           });
-          emailsSent += 1;
-        } else if (!email) {
-          console.warn(`No email for user ${userId}. In-app and push notification attempted.`);
+          notificationsCreated += 1;
+
+          // Push notification for each student
+          const pushResult = await sendPushToUser(db, studentId, {
+            title,
+            body: message,
+            assignmentId: assignmentDoc.id,
+            sectionId: sectionDoc.id,
+          });
+          pushesSent += pushResult.sent;
+          pushFailures += pushResult.failed;
+
+          // Email for each student
+          if (resend) {
+            const userDoc = await db.collection('users').doc(studentId).get();
+            const user = userDoc.data();
+            const email = user?.email;
+            if (email) {
+              await resend.emails.send({
+                from: fromEmail,
+                to: email,
+                subject: `TaskBuddy: ${title}`,
+                html: `
+                  <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #171717;">
+                    <h2 style="margin: 0 0 16px; color: #111827;">${escapeHtml(title)}</h2>
+                    <p>Hello ${escapeHtml(user?.name || 'there')},</p>
+                    <p>A deadline is approaching in your section.</p>
+                    <div style="background: #f5f5f5; padding: 16px; border-radius: 12px; margin: 20px 0;">
+                      <p><b>Title:</b> ${escapeHtml(assignment.title)}</p>
+                      <p><b>Course:</b> ${escapeHtml(assignment.course)}</p>
+                      <p><b>Type:</b> ${escapeHtml(assignment.type || 'Task')}</p>
+                      <p><b>Due in:</b> ${escapeHtml(reminderWindow.label)}</p>
+                      <p><b>Deadline:</b> ${escapeHtml(deadlineText)}</p>
+                    </div>
+                    <p><a href="${escapeHtml(appUrl)}" style="color: #2563eb;">Open TaskBuddy</a></p>
+                    <p style="font-size: 12px; color: #737373;">— TaskBuddy Automated Reminder</p>
+                  </div>
+                `,
+                text: `${message}\nDeadline: ${deadlineText}\nOpen TaskBuddy: ${appUrl}`,
+              });
+              emailsSent += 1;
+            }
+          }
         }
 
         await assignmentDoc.ref.update({

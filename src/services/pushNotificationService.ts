@@ -107,7 +107,8 @@ async function saveCurrentFcmToken() {
     await navigator.serviceWorker.ready;
 
     const messaging = getMessaging(app);
-    const token = await getToken(messaging, {
+    // First attempt
+    let token = await getToken(messaging, {
       vapidKey: VAPID_KEY,
       serviceWorkerRegistration: registration,
     });
@@ -116,11 +117,28 @@ async function saveCurrentFcmToken() {
       throw new Error('Could not create a push notification token.');
     }
 
+    // If this token was previously marked inactive in Firestore, force a fresh token
     const tokenId = token.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
-    const tokenPath = `users/${user.uid}/notificationTokens/${tokenId}`;
+    const existingSnap = await import('firebase/firestore').then(({ getDoc, doc: firestoreDoc }) =>
+      getDoc(firestoreDoc(db, 'users', user.uid, 'notificationTokens', tokenId))
+    ).catch(() => null);
+    if (existingSnap && existingSnap.exists() && existingSnap.data()?.active === false) {
+      // Token was marked invalid — delete it from FCM and get a fresh one
+      const { deleteToken } = await import('firebase/messaging');
+      await deleteToken(messaging).catch(() => undefined);
+      const freshToken = await getToken(messaging, {
+        vapidKey: VAPID_KEY,
+        serviceWorkerRegistration: registration,
+      });
+      if (freshToken) token = freshToken;
+    }
+
+    // Recalculate tokenId in case token was refreshed above
+    const freshTokenId = token.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+    const tokenPath = `users/${user.uid}/notificationTokens/${freshTokenId}`;
 
     await setDoc(
-      doc(db, 'users', user.uid, 'notificationTokens', tokenId),
+      doc(db, 'users', user.uid, 'notificationTokens', freshTokenId),
       {
         token,
         platform: /android/i.test(navigator.userAgent) ? 'android' : /iphone|ipad/i.test(navigator.userAgent) ? 'ios' : 'desktop',
