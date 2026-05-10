@@ -284,13 +284,34 @@ async function main() {
         const deadlineText = formatDeadline(deadlineDate);
         const message = `Reminder: "${assignment.title}" (${assignment.course}) is due in about ${reminderWindow.label}.`;
 
-        // Fetch ALL students in this section and notify each one
+        // Collect all user IDs to notify for this section
+        const userIdsToNotify = new Set<string>();
+
+        // 1. All students in this section
         const studentsSnapshot = await sectionDoc.ref.collection('students').get();
-        const studentIds: string[] = studentsSnapshot.docs.map(d => d.id);
+        for (const s of studentsSnapshot.docs) userIdsToNotify.add(s.id);
 
-        console.log(`Section ${sectionDoc.id}: notifying ${studentIds.length} students for assignment ${assignmentDoc.id}`);
+        // 2. Section admins who have this section in their sectionIds
+        const sectionAdminsSnapshot = await db.collection('users')
+          .where('role', 'in', ['sectionAdmin', 'admin'])
+          .get();
+        for (const u of sectionAdminsSnapshot.docs) {
+          const sectionIds = u.data().sectionIds || [];
+          if (sectionIds.includes(sectionDoc.id)) userIdsToNotify.add(u.id);
+        }
 
-        for (const studentId of studentIds) {
+        // 3. Super admins who currently have this section selected (activeSectionId)
+        const superAdminsSnapshot = await db.collection('users')
+          .where('role', '==', 'superAdmin')
+          .get();
+        for (const u of superAdminsSnapshot.docs) {
+          if (u.data().activeSectionId === sectionDoc.id) userIdsToNotify.add(u.id);
+        }
+
+        const allUserIds = Array.from(userIdsToNotify);
+        console.log(`Section ${sectionDoc.id}: notifying ${allUserIds.length} users (students + admins) for assignment ${assignmentDoc.id}`);
+
+        for (const studentId of allUserIds) {
           // In-app notification for each student
           await sectionDoc.ref.collection('notifications').add({
             userId: studentId,
@@ -353,7 +374,7 @@ async function main() {
         });
 
         console.log(
-          `Sent ${reminderWindow.key} reminder for assignment ${assignmentDoc.id}: students=${studentIds.length}, notifications=${notificationsCreated}, pushes=${pushesSent}, pushFailures=${pushFailures}, emails=${emailsSent}`
+          `Sent ${reminderWindow.key} reminder for assignment ${assignmentDoc.id}: users=${allUserIds.length}, notifications=${notificationsCreated}, pushes=${pushesSent}, pushFailures=${pushFailures}, emails=${emailsSent}`
         );
       }
     }
