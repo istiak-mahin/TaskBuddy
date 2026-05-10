@@ -70,8 +70,8 @@ try {
 
       var options = {
         body: safeGetNotificationBody(payload),
-        icon: '/TaskBuddy/pwa-192x192.png',
-        badge: '/TaskBuddy/pwa-192x192.png',
+        icon: './pwa-192x192.png',
+        badge: './pwa-192x192.png',
         data: {
           url: safeGetNotificationUrl(payload)
         }
@@ -99,8 +99,8 @@ self.addEventListener('push', function (event) {
 
   var options = {
     body: safeGetNotificationBody(payload),
-    icon: '/TaskBuddy/pwa-192x192.png',
-    badge: '/TaskBuddy/pwa-192x192.png',
+    icon: './pwa-192x192.png',
+    badge: './pwa-192x192.png',
     data: {
       url: safeGetNotificationUrl(payload)
     }

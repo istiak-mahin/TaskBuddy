@@ -3,10 +3,9 @@ import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 import { auth, app, db } from '../firebase';
 
-const FALLBACK_VAPID_KEY =
-  'BGjT6VtlDKhZx7ebn5Xz7ZVOaO7tsA_Xxw5EEknfAkzebJdn1C_bjX0x9HPbl5Zp3EbPU_44b_P5G6TmoxcUTPQ';
-
-const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY || FALLBACK_VAPID_KEY;
+// VAPID key must be set via VITE_FIREBASE_VAPID_KEY in GitHub Secrets (or .env locally).
+// Never use a fallback — a wrong VAPID key causes FCM token creation to fail silently.
+const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY || '';
 const BASE_URL = import.meta.env.BASE_URL || '/TaskBuddy/';
 
 function withBase(path: string) {
@@ -78,8 +77,12 @@ async function saveCurrentFcmToken() {
   try {
     const user = await waitForCurrentUser();
 
-    if (!VAPID_KEY || VAPID_KEY.includes('your_')) {
-      throw new Error('Firebase VAPID key is missing. Add VITE_FIREBASE_VAPID_KEY in GitHub Secrets and redeploy.');
+    console.info('[TaskBuddy Push] VAPID_KEY present:', Boolean(VAPID_KEY), '| length:', VAPID_KEY.length);
+
+    if (!VAPID_KEY) {
+      throw new Error(
+        'VAPID key is missing. Go to Firebase Console → Project Settings → Cloud Messaging → Web Push certificates → copy the Key pair value → add it as VITE_FIREBASE_VAPID_KEY in GitHub Secrets → redeploy.'
+      );
     }
 
     const supported = await isPushNotificationSupported();
@@ -94,8 +97,9 @@ async function saveCurrentFcmToken() {
 
     await user.getIdToken(true);
 
+    // Do NOT hardcode scope — let the browser derive it from the SW file location.
+    // A mismatched scope causes Android Chrome to silently fail FCM token creation.
     const registration = await navigator.serviceWorker.register(withBase('firebase-messaging-sw.js'), {
-      scope: BASE_URL,
       updateViaCache: 'none',
     });
 
@@ -119,7 +123,7 @@ async function saveCurrentFcmToken() {
       doc(db, 'users', user.uid, 'notificationTokens', tokenId),
       {
         token,
-        platform: 'web',
+        platform: /android/i.test(navigator.userAgent) ? 'android' : /iphone|ipad/i.test(navigator.userAgent) ? 'ios' : 'desktop',
         active: true,
         permission: Notification.permission,
         uid: user.uid,

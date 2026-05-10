@@ -152,7 +152,8 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
   const [pushSupported, setPushSupported] = useState(false);
   const [pushSaving, setPushSaving] = useState(false);
   const [pushError, setPushError] = useState<string | null>(null);
-  const [pushSaved, setPushSaved] = useState(false);
+  const PUSH_SAVED_KEY = 'taskbuddy_push_saved_' + (profile?.uid || 'anon');
+  const [pushSaved, setPushSaved] = useState(() => localStorage.getItem('taskbuddy_push_saved_' + (profile?.uid || 'anon')) === 'true');
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [docToDelete, setDocToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -291,11 +292,13 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
       if (supported && getNotificationPermissionStatus() === 'granted') {
         await syncPushTokenIfAlreadyGranted();
         setPushSaved(true);
+        localStorage.setItem('taskbuddy_push_saved_' + (profile?.uid || 'anon'), 'true');
         setPushStatus(getNotificationPermissionStatus());
       }
     } catch (err: any) {
       console.warn('Push notification status check failed:', err);
       setPushSaved(false);
+      localStorage.removeItem('taskbuddy_push_saved_' + (profile?.uid || 'anon'));
       setPushStatus(getNotificationPermissionStatus());
       setPushError(err?.message || 'Could not save this device for phone notifications. Tap Fix phone notifications to try again.');
     }
@@ -317,12 +320,14 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
     try {
       await enablePushNotifications();
       setPushSaved(true);
+      localStorage.setItem('taskbuddy_push_saved_' + (profile?.uid || 'anon'), 'true');
       setPushStatus(getNotificationPermissionStatus());
       setPushSupported(true);
     } catch (err: any) {
       console.error('Push notification setup failed:', err);
       setPushStatus(getNotificationPermissionStatus());
       setPushSaved(false);
+      localStorage.removeItem('taskbuddy_push_saved_' + (profile?.uid || 'anon'));
       setPushError(err?.message || 'Could not enable phone notifications.');
     } finally {
       setPushSaving(false);

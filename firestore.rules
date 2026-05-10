@@ -281,7 +281,7 @@ service cloud.firestore {
         allow read: if isOwner(userId) || isAdmin();
         allow create, update: if isOwner(userId)
                               && request.resource.data.token is string
-                              && request.resource.data.platform == 'web'
+                              && request.resource.data.token.size() > 0
                               && request.resource.data.active is bool;
         allow delete: if isOwner(userId) || isAdmin();
       }
