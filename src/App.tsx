@@ -7,7 +7,7 @@ import {
   signOut,
   User,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp, getDocFromServer } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, getDocFromServer, collection, query, where, onSnapshot, updateDoc, orderBy, limit } from 'firebase/firestore';
 import { UserProfile, OperationType, FirestoreErrorInfo, UserRole } from './types';
 import StudentDashboard from './components/StudentDashboard';
 import AdminDashboard from './components/AdminDashboard';
@@ -28,7 +28,7 @@ import {
   MessageCircle,
 } from 'lucide-react';
 import { isSuperAdminEmail } from './services/sectionService';
-import { setupForegroundPushListener } from './services/pushNotificationService';
+import { setupForegroundPushListener, syncPushTokenIfAlreadyGranted } from './services/pushNotificationService';
 import { motion, AnimatePresence } from 'motion/react';
 
 type AppView = 'dashboard' | 'admin' | 'superadmin';
@@ -149,6 +149,11 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [view, setViewState] = useState<AppView>('dashboard');
 
+  // Global notification bell state — works for ALL roles (student, admin, superAdmin)
+  const [globalNotifs, setGlobalNotifs] = useState<any[]>([]);
+  const [showGlobalNotifPanel, setShowGlobalNotifPanel] = useState(false);
+  const globalNotifRef = useRef<HTMLDivElement>(null);
+
 
   const navigateView = (nextView: AppView) => {
     if (!canOpenView(nextView, profile)) {
@@ -170,6 +175,61 @@ export default function App() {
       if (unsubscribe) unsubscribe();
     };
   }, []);
+
+  // Sync push token for ALL roles (admin, superAdmin, student) on login
+  useEffect(() => {
+    if (!user || !profile) return;
+    syncPushTokenIfAlreadyGranted().catch(() => undefined);
+  }, [user?.uid, profile?.uid]);
+
+  // Global notification listener — for admin/superAdmin who don't have StudentDashboard bell
+  useEffect(() => {
+    if (!user || !profile) return;
+    const role = profile.role;
+    // Students are handled inside StudentDashboard — skip here to avoid duplicates
+    if (role === 'student') return;
+
+    const q = query(
+      collection(db, 'notifications'),
+      where('userId', '==', user.uid),
+      limit(30)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const notifs = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .sort((a: any, b: any) => {
+          const aTime = typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : (a.createdAt?.toMillis?.() || 0);
+          const bTime = typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : (b.createdAt?.toMillis?.() || 0);
+          return bTime - aTime;
+        });
+      setGlobalNotifs(notifs);
+    }, (err) => {
+      console.warn('[TaskBuddy] Admin notification listener error:', err.message);
+    });
+    return () => unsub();
+  }, [user?.uid, profile?.uid, profile?.role]);
+
+  // Close global notif panel on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (globalNotifRef.current && !globalNotifRef.current.contains(e.target as Node)) {
+        setShowGlobalNotifPanel(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const markGlobalNotifRead = async (id: string) => {
+    await updateDoc(doc(db, 'notifications', id), { read: true }).catch(() => undefined);
+    setGlobalNotifs(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  };
+
+  const markAllGlobalNotifsRead = async () => {
+    const unread = globalNotifs.filter(n => !n.read);
+    await Promise.all(unread.map(n => updateDoc(doc(db, 'notifications', n.id), { read: true }).catch(() => undefined)));
+    setGlobalNotifs(prev => prev.map(n => ({ ...n, read: true })));
+  };
 
   useEffect(() => {
     if (!profile || !user) return;
@@ -521,6 +581,56 @@ export default function App() {
               >
                 <MessageCircle className="w-4 h-4" />
               </a>
+
+              {/* Global Notification Bell — visible to admin/superAdmin only (students use StudentDashboard bell) */}
+              {isAdmin && (
+                <div className="relative" ref={globalNotifRef}>
+                  <button
+                    onClick={() => setShowGlobalNotifPanel(v => !v)}
+                    className="w-9 h-9 flex items-center justify-center text-neutral-400 dark:text-neutral-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl transition-all relative"
+                    title="Notifications"
+                  >
+                    <Bell className="w-4 h-4" />
+                    {globalNotifs.some(n => !n.read) && (
+                      <span className="absolute top-1 right-1 w-2 h-2 bg-blue-500 rounded-full" />
+                    )}
+                  </button>
+                  {showGlobalNotifPanel && (
+                    <div className="absolute right-0 top-12 w-80 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl shadow-xl z-50 overflow-hidden">
+                      <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-100 dark:border-neutral-800">
+                        <span className="text-xs font-black uppercase tracking-widest text-neutral-900 dark:text-neutral-50">Notifications</span>
+                        <div className="flex items-center gap-2">
+                          {globalNotifs.some(n => !n.read) && (
+                            <button onClick={markAllGlobalNotifsRead} className="text-[10px] text-blue-500 font-bold hover:underline">Mark all read</button>
+                          )}
+                          <button onClick={() => setShowGlobalNotifPanel(false)} className="text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="max-h-80 overflow-y-auto divide-y divide-neutral-100 dark:divide-neutral-800">
+                        {globalNotifs.length === 0 ? (
+                          <p className="text-xs text-neutral-400 text-center py-8">No notifications yet</p>
+                        ) : globalNotifs.map(n => (
+                          <div
+                            key={n.id}
+                            className={`px-4 py-3 flex items-start gap-3 cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors ${!n.read ? 'bg-blue-50/50 dark:bg-blue-900/10' : ''}`}
+                            onClick={() => markGlobalNotifRead(n.id)}
+                          >
+                            <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${!n.read ? 'bg-blue-500' : 'bg-transparent border border-neutral-300'}`} />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-bold text-neutral-900 dark:text-neutral-50 truncate">{n.title}</p>
+                              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 leading-relaxed">{n.message}</p>
+                              <p className="text-[10px] text-neutral-400 mt-1">{typeof n.createdAt === 'string' ? new Date(n.createdAt).toLocaleString() : ''}</p>
+                            </div>
+                            {!n.read && <Check className="w-3 h-3 text-blue-400 shrink-0 mt-1" />}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <ThemeToggle />
 

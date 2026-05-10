@@ -312,7 +312,21 @@ async function main() {
         console.log(`Section ${sectionDoc.id}: notifying ${allUserIds.length} users (students + admins) for assignment ${assignmentDoc.id}`);
 
         for (const studentId of allUserIds) {
+          try {
           // In-app notification for each student
+          // Write to BOTH global /notifications AND section-scoped /sections/{id}/notifications
+          // Global: so admin/superadmin panels can read it
+          // Section-scoped: so StudentDashboard can read it
+          await db.collection('notifications').add({
+            userId: studentId,
+            title,
+            message,
+            type: 'reminder',
+            read: false,
+            createdAt: now.toISOString(),
+            assignmentId: assignmentDoc.id,
+            sectionId: sectionDoc.id,
+          });
           await sectionDoc.ref.collection('notifications').add({
             userId: studentId,
             title,
@@ -365,6 +379,9 @@ async function main() {
               });
               emailsSent += 1;
             }
+          }
+          } catch (perUserError: any) {
+            console.warn(`Failed to notify user ${studentId}:`, perUserError?.message || perUserError);
           }
         }
 

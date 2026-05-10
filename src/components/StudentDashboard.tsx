@@ -242,10 +242,9 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
     });
 
     const notifQ = query(
-      getSectionCollection(profile, 'notifications'), 
+      getSectionCollection(profile, 'notifications'),
       where('userId', '==', profile.uid),
-      orderBy('createdAt', 'desc'),
-      limit(20)
+      limit(30)
     );
     const notesQ = query(getSectionCollection(profile, 'notes'));
     const unsubscribeNotes = onSnapshot(notesQ, (snapshot) => {
@@ -258,17 +257,26 @@ export default function StudentDashboard({ profile, isAdmin, studentId }: Studen
     });
 
     const unsubscribeNotifs = onSnapshot(notifQ, (snapshot) => {
-      const newNotifs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AppNotification));
-      
+      const newNotifs = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as AppNotification))
+        .sort((a: any, b: any) => {
+          // Sort client-side by createdAt descending (avoids composite index requirement)
+          const aTime = typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : (a.createdAt?.toMillis?.() || 0);
+          const bTime = typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : (b.createdAt?.toMillis?.() || 0);
+          return bTime - aTime;
+        });
+
       // Check for new unread notifications to show browser push
       newNotifs.forEach(notif => {
         const isNew = !notifications.find(n => n.id === notif.id);
-        if (isNew && !notif.read && Notification.permission === "granted") {
-          new Notification(notif.title, { body: notif.message });
+        if (isNew && !notif.read && Notification.permission === 'granted') {
+          new Notification(notif.title, { body: notif.message, icon: '/TaskBuddy/pwa-192x192.png' });
         }
       });
 
       setNotifications(newNotifs);
+    }, (err) => {
+      console.warn('[TaskBuddy] Notification listener error:', err.message);
     });
 
     return () => {
