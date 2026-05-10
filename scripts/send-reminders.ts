@@ -353,7 +353,7 @@ async function main() {
         });
 
         console.log(
-          `Sent ${reminderWindow.key} reminder for assignment ${assignmentDoc.id}: notifications=1, push=${pushResult.sent}, email=${resend && email ? 1 : 0}`
+          `Sent ${reminderWindow.key} reminder for assignment ${assignmentDoc.id}: students=${studentIds.length}, notifications=${notificationsCreated}, pushes=${pushesSent}, pushFailures=${pushFailures}, emails=${emailsSent}`
         );
       }
     }
