@@ -7,7 +7,7 @@ import {
   signOut,
   User,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp, getDocFromServer, collection, query, where, onSnapshot, updateDoc, orderBy, limit } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, getDocFromServer, collection, query, where, onSnapshot, updateDoc, limit } from 'firebase/firestore';
 import { UserProfile, OperationType, FirestoreErrorInfo, UserRole } from './types';
 import StudentDashboard from './components/StudentDashboard';
 import AdminDashboard from './components/AdminDashboard';
@@ -26,6 +26,8 @@ import {
   ShieldCheck,
   Zap,
   MessageCircle,
+  Bell,
+  Check,
 } from 'lucide-react';
 import { isSuperAdminEmail } from './services/sectionService';
 import { setupForegroundPushListener, syncPushTokenIfAlreadyGranted } from './services/pushNotificationService';
